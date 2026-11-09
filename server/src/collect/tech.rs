@@ -206,7 +206,13 @@ mod tests {
         let text = std::fs::read_to_string(dir.path().join("tech.js")).unwrap();
         assert_eq!(text, format!("window.TECH={};", gold));
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
-        assert_eq!(TECH_CODES.len(), 18);
+        assert_eq!(
+            TECH_CODES,
+            [
+                "M1805", "M1855", "M1861", "M1853", "M1827", "M1811", "M1419", "M1405", "M1856",
+                "M1884", "M1802", "M1801", "M1810", "M1806", "M1867", "M1803", "I1404", "I1401"
+            ]
+        );
     }
 
     /// Réponse minimale d'une série.

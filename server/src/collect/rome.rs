@@ -16,6 +16,9 @@ pub const DEFAULT_WORKERS: usize = 4;
 const LIST_PATH: &str = "/v1/referentiel/activites/ROME";
 const OFFERS_PATH: &str = "/v1/indicateur/stat-offres";
 
+/// Part maximale (exclusive) de codes en échec tolérée : 1/10 = 10 %.
+const MAX_FAILURE_RATIO: (usize, usize) = (1, 10);
+
 type Fetched = Result<BTreeMap<String, f64>, CollectError>;
 
 /// Offres « Toutes offres » (`TOFF`) par trimestre depuis `2021T1`, valeurs non nulles seulement.
@@ -135,6 +138,13 @@ pub async fn run<C: StatApi>(
                 first_failure.get_or_insert(e);
             }
         }
+    }
+    // Garde (seuil exclusif, arithmétique entière) : trop d'échecs = ne rien écraser.
+    if failures * MAX_FAILURE_RATIO.1 > acts.len() * MAX_FAILURE_RATIO.0 {
+        return Err(CollectError::Fetch(format!(
+            "rome : {failures} échec(s) sur {} code(s)",
+            acts.len()
+        )));
     }
     if results.values().all(BTreeMap::is_empty) {
         return Err(CollectError::Fetch(format!(
@@ -284,11 +294,20 @@ mod tests {
     }
 
     /// Monte la liste et une réponse par code (requête reconnue par son corps JSON).
+    /// La liste est complétée par 16 codes « bouchons » sans donnée (réponse vide, pas un échec)
+    /// pour que l'échec d'un seul code reste sous le seuil de 10 % de la garde.
     async fn rome_server(per_code: impl Fn(&str) -> ResponseTemplate) -> MockServer {
         let srv = server().await;
+        let mut list = fixture("activites");
+        for i in 0..16 {
+            list["activites"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"codeActivite": format!("Y{i:02}"), "libelleActivite": "bouchon"}));
+        }
         Mock::given(method("GET"))
             .and(path("/api/v1/referentiel/activites/ROME"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(fixture("activites")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(list))
             .mount(&srv)
             .await;
         for c in ROME_CODES {
@@ -301,6 +320,13 @@ mod tests {
                 .mount(&srv)
                 .await;
         }
+        Mock::given(method("POST"))
+            .and(path("/api/v1/indicateur/stat-offres"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"listeValeursParPeriode": []})),
+            )
+            .mount(&srv)
+            .await;
         srv
     }
 
@@ -328,7 +354,7 @@ mod tests {
             .iter()
             .filter(|r| r.url.path().ends_with("stat-offres"))
             .count();
-        assert_eq!(posts, 4);
+        assert_eq!(posts, 20);
     }
 
     #[tokio::test]
@@ -457,6 +483,89 @@ mod tests {
                      "valeurPrincipaleNombre": 1}]})))
             }
         }
+    }
+
+    /// Faux client : les `fail` premiers codes échouent (500), les `empty` suivants répondent
+    /// sans donnée, les autres ont une valeur.
+    struct Scripted {
+        n: usize,
+        fail: usize,
+        empty: usize,
+    }
+
+    #[allow(clippy::manual_async_fn)] // la borne `Send` du trait exige la forme explicite
+    impl StatApi for Scripted {
+        fn call<'a>(
+            &'a self,
+            path: &'a str,
+            body: Option<&'a Value>,
+        ) -> impl std::future::Future<Output = Result<Option<Value>, super::super::ft::FtError>>
+               + Send
+               + 'a {
+            async move {
+                if path == LIST_PATH {
+                    let acts: Vec<Value> = (0..self.n)
+                        .map(
+                            |i| json!({"codeActivite": format!("Z{i:04}"), "libelleActivite": "x"}),
+                        )
+                        .collect();
+                    return Ok(Some(json!({"activites": acts})));
+                }
+                let code = body.unwrap()["codeActivite"].as_str().unwrap();
+                let i: usize = code[1..].parse().unwrap();
+                if i < self.fail {
+                    Err(super::super::ft::FtError::Http(500))
+                } else if i < self.fail + self.empty {
+                    Ok(Some(json!({"listeValeursParPeriode": []})))
+                } else {
+                    Ok(Some(json!({"listeValeursParPeriode": [
+                        {"codeNomenclature": "TOFF", "codePeriode": "2022T1",
+                         "valeurPrincipaleNombre": 1}]})))
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn ten_percent_failures_still_writes() {
+        let api = Scripted {
+            n: 100,
+            fail: 10,
+            empty: 0,
+        };
+        let (dir, store, _) = with_sentinel("rome.js", "ROME");
+        run(&api, &store, day(), 4).await.unwrap();
+        let got = payload(dir.path(), "rome.js", "ROME");
+        assert_eq!(got["items"].as_object().unwrap().len(), 90);
+    }
+
+    #[tokio::test]
+    async fn more_than_ten_percent_failures_keeps_previous_file() {
+        let api = Scripted {
+            n: 100,
+            fail: 11,
+            empty: 0,
+        };
+        let (dir, store, sentinel) = with_sentinel("rome.js", "ROME");
+        let err = run(&api, &store, day(), 4).await.unwrap_err();
+        assert!(matches!(err, CollectError::Fetch(_)), "{err}");
+        let msg = err.to_string();
+        assert!(msg.contains("rome : 11 échec(s) sur 100 code(s)"), "{msg}");
+        assert_eq!(std::fs::read(dir.path().join("rome.js")).unwrap(), sentinel);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn empty_responses_do_not_count_as_failures() {
+        let api = Scripted {
+            n: 100,
+            fail: 0,
+            empty: 15,
+        };
+        let (dir, store, _) = with_sentinel("rome.js", "ROME");
+        run(&api, &store, day(), 4).await.unwrap();
+        let got = payload(dir.path(), "rome.js", "ROME");
+        assert_eq!(got["items"].as_object().unwrap().len(), 85);
     }
 
     #[tokio::test]
