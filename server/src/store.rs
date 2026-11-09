@@ -3,6 +3,10 @@
 use serde_json::Value;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Rend unique le nom du fichier temporaire pour chaque appel du processus.
+static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub const DATA_FILES: [(&str, &str); 5] = [
     ("data.js", "DATA"),
@@ -28,7 +32,8 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "chemin sans nom"))?;
     let mut tmp_name = std::ffi::OsString::from(".");
     tmp_name.push(name);
-    tmp_name.push(format!(".{}.tmp", std::process::id()));
+    let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    tmp_name.push(format!(".{}.{}.tmp", std::process::id(), n));
     let tmp = dir.join(tmp_name);
     let res = (|| {
         let mut f = std::fs::File::create(&tmp)?;
@@ -142,5 +147,63 @@ mod tests {
         let s = Store::new(&missing);
         assert!(s.save("data.js", &json!({})).is_err());
         assert!(!missing.exists());
+    }
+
+    #[test]
+    fn concurrent_saves_same_file_do_not_collide() {
+        let d = tempfile::tempdir().unwrap();
+        let s = Store::new(d.path());
+        let values: Vec<String> = (0..8).map(|i| format!("v{}", "x".repeat(200_000 + i))).collect();
+        let handles: Vec<_> = values
+            .iter()
+            .cloned()
+            .map(|v| {
+                let s = s.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..20 {
+                        s.save("data.js", &json!(v)).expect("save ok");
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let got = String::from_utf8(s.read("data.js").unwrap()).unwrap();
+        assert!(values.iter().any(|v| got == render_js("DATA", &json!(v))));
+        let names: Vec<_> = std::fs::read_dir(d.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["data.js"], "leftover temp files: {names:?}");
+    }
+
+    #[test]
+    fn write_atomic_rename_failure_cleans_temp_and_keeps_old() {
+        let d = tempfile::tempdir().unwrap();
+        let old = d.path().join("old.js");
+        write_atomic(&old, b"old").unwrap();
+        let target = d.path().join("target_dir");
+        std::fs::create_dir(&target).unwrap();
+        assert!(write_atomic(&target, b"new").is_err());
+        let mut names: Vec<_> = std::fs::read_dir(d.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["old.js", "target_dir"]);
+        assert_eq!(std::fs::read(&old).unwrap(), b"old");
+    }
+
+    #[test]
+    fn is_known_is_exact_match() {
+        let d = tempfile::tempdir().unwrap();
+        let s = Store::new(d.path());
+        for bad in ["../rome.js", "sub/rome.js", "rome.js/", "rome.json", "ROME.JS", "", "..\rome.js"] {
+            assert!(!Store::is_known(bad), "{bad:?}");
+            assert!(s.read(bad).is_err(), "{bad:?}");
+            assert!(s.save(bad, &json!({})).is_err(), "{bad:?}");
+        }
+        assert!(std::fs::read_dir(d.path()).unwrap().next().is_none());
     }
 }

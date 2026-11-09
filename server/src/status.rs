@@ -34,6 +34,7 @@ impl StatusBoard {
         s.last_error = None;
     }
 
+    /// `msg` is exposed by the status endpoint: the caller must not pass secrets.
     pub fn record_err(&self, name: &str, now: DateTime<Utc>, msg: &str) {
         let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let s = g.entry(name.to_string()).or_default();
@@ -62,6 +63,8 @@ mod tests {
         assert_eq!(s.last_ok.as_deref(), Some("2026-01-01T10:00:00Z"));
         assert_eq!(s.last_attempt.as_deref(), Some("2026-01-02T10:00:00Z"));
         assert_eq!(s.last_error.as_deref(), Some("boom"));
+        b.record_ok("ft", t2);
+        assert_eq!(b.snapshot()["ft"].last_error, None);
     }
 
     #[test]
