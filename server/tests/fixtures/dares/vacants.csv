@@ -1,0 +1,48 @@
+﻿﻿Date;Champ;Nomenclature;Code NAF;Libellé NAF;Type de données;Nombre d'emplois vacants;Taux d'emplois vacants (en %)
+2026-T2;Plus de 10 salariés;A10;F;Construction (section F de la Naf);cvs-cjo;18213;1.74
+2026-T2;Plus de 10 salariés;A10;GTI;Commerce de gros et de détail, transports, hébergement et restauration (sections G à I de la Naf);cvs-cjo;77592;1.59
+2026-T2;Plus de 10 salariés;A10;L;Activités immobilières (section L de la Naf);cvs-cjo;2621;1.46
+2026-T2;Plus de 10 salariés;A10;BTE;Industrie manufacturière, industries extractives et autres (sections B à E de la Naf);cvs-cjo;43656;1.5
+2026-T2;Plus de 10 salariés;A10;J;Information et communication (section J de la Naf);cvs-cjo;15624;1.87
+2026-T2;Plus de 10 salariés;A10;P_Q;Enseignement, santé humaine et action sociale (sections P et Q de la Naf);cvs-cjo;59308;2.62
+2026-T2;Plus de 10 salariés;A10;R_S;Arts, spectacles, activités récréatives, autres activités de services (sections R et S de la Naf);cvs-cjo;8544;1.58
+2026-T2;Plus de 10 salariés;A10;K;Activités financières et d'assurance (section K de la Naf);cvs-cjo;7707;1.09
+2026-T2;Plus de 10 salariés;A10;M_N;Activités spécialisées scientifiques et techniques et activités de services administratifs et de soutien (sections M et N de la Naf);cvs-cjo;38338;1.5
+2020-T1;Plus de 10 salariés;A10;GTI;Commerce de gros et de détail, transports, hébergement et restauration (sections G à I de la Naf);cvs-cjo;;
+2020-T1;Plus de 10 salariés;A10;K;Activités financières et d'assurance (section K de la Naf);cvs-cjo;;
+2020-T1;Plus de 10 salariés;A10;L;Activités immobilières (section L de la Naf);cvs-cjo;;
+2020-T1;Plus de 10 salariés;A10;P_Q;Enseignement, santé humaine et action sociale (sections P et Q de la Naf);cvs-cjo;;
+2020-T1;Plus de 10 salariés;A10;BTE;Industrie manufacturière, industries extractives et autres (sections B à E de la Naf);cvs-cjo;;
+2020-T1;Plus de 10 salariés;A10;R_S;Arts, spectacles, activités récréatives, autres activités de services (sections R et S de la Naf);cvs-cjo;;
+2020-T1;Plus de 10 salariés;A10;F;Construction (section F de la Naf);cvs-cjo;;
+2020-T1;Plus de 10 salariés;A10;J;Information et communication (section J de la Naf);cvs-cjo;;
+2020-T1;Plus de 10 salariés;A10;M_N;Activités spécialisées scientifiques et techniques et activités de services administratifs et de soutien (sections M et N de la Naf);cvs-cjo;;
+2019-T2;Plus de 10 salariés;A10;BTE;Industrie manufacturière, industries extractives et autres (sections B à E de la Naf);cvs-cjo;30821;1.08
+2019-T2;Plus de 10 salariés;A10;M_N;Activités spécialisées scientifiques et techniques et activités de services administratifs et de soutien (sections M et N de la Naf);cvs-cjo;29094;1.28
+2019-T2;Plus de 10 salariés;A10;F;Construction (section F de la Naf);cvs-cjo;14947;1.5
+2019-T2;Plus de 10 salariés;A10;GTI;Commerce de gros et de détail, transports, hébergement et restauration (sections G à I de la Naf);cvs-cjo;47376;1.05
+2019-T2;Plus de 10 salariés;A10;K;Activités financières et d'assurance (section K de la Naf);cvs-cjo;6869;1.05
+2019-T2;Plus de 10 salariés;A10;J;Information et communication (section J de la Naf);cvs-cjo;19297;2.53
+2019-T2;Plus de 10 salariés;A10;L;Activités immobilières (section L de la Naf);cvs-cjo;3953;2.19
+2019-T2;Plus de 10 salariés;A10;P_Q;Enseignement, santé humaine et action sociale (sections P et Q de la Naf);cvs-cjo;35316;1.77
+2019-T2;Plus de 10 salariés;A10;R_S;Arts, spectacles, activités récréatives, autres activités de services (sections R et S de la Naf);cvs-cjo;7204;1.46
+2019-T1;Plus de 10 salariés;A10;BTE;Industrie manufacturière, industries extractives et autres (sections B à E de la Naf);cvs-cjo;31432;1.11
+2019-T1;Plus de 10 salariés;A10;GTI;Commerce de gros et de détail, transports, hébergement et restauration (sections G à I de la Naf);cvs-cjo;50085;1.11
+2019-T1;Plus de 10 salariés;A10;L;Activités immobilières (section L de la Naf);cvs-cjo;2268;1.27
+2019-T1;Plus de 10 salariés;A10;P_Q;Enseignement, santé humaine et action sociale (sections P et Q de la Naf);cvs-cjo;34604;1.73
+2019-T1;Ensemble;A10;F;Construction (section F de la Naf);cvs-cjo;44225;2.87
+2019-T1;Plus de 10 salariés;A4;Industrie;Industrie;cvs-cjo;31432;1.11
+2019-T1;Plus de 10 salariés;A10;K;Activités financières et d'assurance (section K de la Naf);cvs-cjo;6432;0.98
+2019-T1;Plus de 10 salariés;A10;R_S;Arts, spectacles, activités récréatives, autres activités de services (sections R et S de la Naf);cvs-cjo;7626;1.54
+2019-T1;Plus de 10 salariés;A10;F;Construction (section F de la Naf);cvs-cjo;13339;1.35
+2019-T1;Plus de 10 salariés;A10;J;Information et communication (section J de la Naf);cvs-cjo;19212;2.54
+2019-T1;Plus de 10 salariés;A10;M_N;Activités spécialisées scientifiques et techniques et activités de services administratifs et de soutien (sections M et N de la Naf);cvs-cjo;30294;1.34
+2018-T4;Plus de 10 salariés;A10;BTE;Industrie manufacturière, industries extractives et autres (sections B à E de la Naf);cvs-cjo;31136;1.1
+2018-T4;Plus de 10 salariés;A10;F;Construction (section F de la Naf);cvs-cjo;12062;1.24
+2018-T4;Plus de 10 salariés;A10;K;Activités financières et d'assurance (section K de la Naf);cvs-cjo;6222;0.96
+2018-T4;Plus de 10 salariés;A10;GTI;Commerce de gros et de détail, transports, hébergement et restauration (sections G à I de la Naf);cvs-cjo;51332;1.14
+2018-T4;Plus de 10 salariés;A10;J;Information et communication (section J de la Naf);cvs-cjo;20528;2.74
+2018-T4;Plus de 10 salariés;A10;L;Activités immobilières (section L de la Naf);cvs-cjo;2009;1.14
+2018-T4;Plus de 10 salariés;A10;M_N;Activités spécialisées scientifiques et techniques et activités de services administratifs et de soutien (sections M et N de la Naf);cvs-cjo;29195;1.3
+2018-T4;Plus de 10 salariés;A10;P_Q;Enseignement, santé humaine et action sociale (sections P et Q de la Naf);cvs-cjo;32246;1.62
+2018-T4;Plus de 10 salariés;A10;R_S;Arts, spectacles, activités récréatives, autres activités de services (sections R et S de la Naf);cvs-cjo;8689;1.76

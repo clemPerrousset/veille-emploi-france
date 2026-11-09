@@ -1,3 +1,5 @@
+pub mod dares;
+pub mod eurostat;
 pub mod indeed;
 
 /// Erreur d'analyse d'une réponse de source de données.
