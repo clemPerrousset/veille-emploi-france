@@ -19,7 +19,7 @@ pub struct FtCreds {
 impl fmt::Debug for FtCreds {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FtCreds")
-            .field("client_id", &self.client_id)
+            .field("client_id", &"***")
             .field("client_secret", &"***")
             .finish()
     }
@@ -144,6 +144,25 @@ mod tests {
         let s = format!("{:?}", cfg);
         assert!(!s.contains("fake-secret-123"));
         assert!(s.contains("***"));
+    }
+
+    #[test]
+    fn debug_never_shows_id_nor_secret() {
+        let creds = FtCreds {
+            client_id: "PAR_fake_client".into(),
+            client_secret: "fake-secret-123".into(),
+        };
+        let s = format!("{creds:?}");
+        assert!(!s.contains("PAR_fake_client") && !s.contains("fake-secret-123"), "{s}");
+        assert!(s.contains("client_id") && s.contains("client_secret"), "{s}");
+        let cfg = Config::from_map(&map(&[
+            ("FT_CLIENT_ID", "PAR_fake_client"),
+            ("FT_CLIENT_SECRET", "fake-secret-123"),
+        ]))
+        .unwrap();
+        for s in [format!("{cfg:?}"), format!("{cfg:#?}")] {
+            assert!(!s.contains("PAR_fake_client") && !s.contains("fake-secret-123"), "{s}");
+        }
     }
 
     #[test]

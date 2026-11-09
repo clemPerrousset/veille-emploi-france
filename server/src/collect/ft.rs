@@ -20,6 +20,10 @@ const TRIES: u32 = 5;
 /// Le jeton est renouvelé 60 s avant son expiration (comme `fetch_rome.py`).
 const SAFETY_MARGIN: Duration = Duration::from_secs(60);
 const DEFAULT_EXPIRES_IN: u64 = 1400;
+/// Durée de vie retenue pour le jeton : au moins 61 s (sinon chaque appel redemanderait un jeton,
+/// la marge étant de 60 s) et au plus 24 h (une valeur géante ferait déborder l'addition).
+const MIN_EXPIRES_IN: u64 = 61;
+const MAX_EXPIRES_IN: u64 = 86_400;
 const TOKEN_TIMEOUT: Duration = Duration::from_secs(30);
 const CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -242,7 +246,13 @@ impl FtClient {
                 c => FtError::Http(c),
             });
         }
-        let body: Value = resp.json().await.map_err(|_| {
+        // Lecture du corps (erreur = réseau) puis analyse (erreur = format) : `reqwest` range une
+        // coupure de connexion sous `is_decode()` à cause du décodeur gzip.
+        let bytes = resp.bytes().await.map_err(|_| {
+            tracing::warn!("France Travail : lecture de la réponse de jeton interrompue");
+            FtError::Network
+        })?;
+        let body: Value = serde_json::from_slice(&bytes).map_err(|_| {
             tracing::warn!("France Travail : réponse de jeton illisible");
             FtError::Parse
         })?;
@@ -257,7 +267,8 @@ impl FtClient {
         let expires_in = body
             .get("expires_in")
             .and_then(Value::as_u64)
-            .unwrap_or(DEFAULT_EXPIRES_IN);
+            .unwrap_or(DEFAULT_EXPIRES_IN)
+            .clamp(MIN_EXPIRES_IN, MAX_EXPIRES_IN);
         tracing::debug!(expires_in, "France Travail : jeton obtenu");
         Ok(Token {
             value,
@@ -309,7 +320,7 @@ impl FtClient {
             };
             let sent = req
                 .timeout(CALL_TIMEOUT)
-                .header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"))
+                .bearer_auth(&token)
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
                 .header(reqwest::header::ACCEPT, "application/json")
                 .send()
@@ -364,12 +375,8 @@ impl FtClient {
                 }
                 _ => {}
             }
-            match resp.json::<Value>().await {
-                Ok(v) => return Ok(Some(v)),
-                Err(e) if e.is_decode() => {
-                    tracing::warn!(attempt, "France Travail : JSON invalide");
-                    return Err(FtError::Parse);
-                }
+            let bytes = match resp.bytes().await {
+                Ok(b) => b,
                 Err(_) => {
                     tracing::warn!(
                         attempt,
@@ -377,8 +384,16 @@ impl FtClient {
                         "France Travail : lecture interrompue, nouvel essai"
                     );
                     last = FtError::Network;
+                    continue;
                 }
-            }
+            };
+            return match serde_json::from_slice::<Value>(&bytes) {
+                Ok(v) => Ok(Some(v)),
+                Err(_) => {
+                    tracing::warn!(attempt, "France Travail : JSON invalide");
+                    Err(FtError::Parse)
+                }
+            };
         }
         tracing::warn!(
             tries = TRIES,
@@ -764,6 +779,71 @@ mod tests {
         let rs = futures::future::join_all((0..8).map(|_| c.call("/x", None))).await;
         assert!(rs.iter().all(|r| matches!(r, Ok(Some(_)))));
         assert_eq!(count(&srv, "/token").await, 1);
+    }
+
+    #[tokio::test]
+    async fn huge_expires_in_does_not_panic_and_is_clamped() {
+        let srv = MockServer::start().await;
+        mount_token(&srv, SeqToken::new(u64::MAX)).await;
+        Mock::given(method("GET"))
+            .and(path("/api/x"))
+            .respond_with(ok_json())
+            .mount(&srv)
+            .await;
+        let (c, clock) = client(&srv);
+        c.call("/x", None).await.unwrap();
+        clock.advance(86_400 - 61); // reste 61 s : encore valide
+        c.call("/x", None).await.unwrap();
+        assert_eq!(count(&srv, "/token").await, 1);
+        clock.advance(2); // sous la marge : le plafond de 24 h s'applique
+        c.call("/x", None).await.unwrap();
+        assert_eq!(count(&srv, "/token").await, 2);
+    }
+
+    #[tokio::test]
+    async fn tiny_expires_in_does_not_refetch_on_every_call() {
+        for tiny in [0u64, 1, 30, 60] {
+            let srv = MockServer::start().await;
+            mount_token(&srv, SeqToken::new(tiny)).await;
+            Mock::given(method("GET"))
+                .and(path("/api/x"))
+                .respond_with(ok_json())
+                .mount(&srv)
+                .await;
+            let (c, _) = client(&srv);
+            for _ in 0..4 {
+                c.call("/x", None).await.unwrap();
+            }
+            assert_eq!(count(&srv, "/token").await, 1, "expires_in={tiny}");
+        }
+    }
+
+    #[tokio::test]
+    async fn token_body_read_failure_is_network_and_retried() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = l.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let h = hits.clone();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = l.accept().await {
+                h.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf).await; // la requête est lue : pas de RST à la fermeture
+                                                   // annonce 100 octets, en envoie 1, puis coupe
+                let _ = sock
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{")
+                    .await;
+                drop(sock);
+            }
+        });
+        let ep = FtEndpoints {
+            token_url: format!("http://127.0.0.1:{port}/token"),
+            base_url: format!("http://127.0.0.1:{port}/api"),
+        };
+        let c = client_with(ep, FakeClock::new());
+        assert_eq!(c.call("/x", None).await.unwrap_err(), FtError::Network);
+        assert_eq!(hits.load(Ordering::SeqCst), 5);
     }
 
     #[test]
