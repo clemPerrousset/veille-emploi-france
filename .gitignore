@@ -17,3 +17,6 @@ __pycache__/
 
 # Espace de travail des agents (journal, briefs, rapports)
 .superpowers/
+
+# Build Rust
+server/target/
