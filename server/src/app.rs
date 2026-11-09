@@ -124,6 +124,18 @@ fn build_ctx(cfg: Config) -> Result<Ctx, String> {
             e.kind()
         )
     })?;
+    // Valeurs par défaut (ai_*.js) : une seule fois, avant le serveur et le planificateur, sans
+    // jamais écraser un fichier existant ni toucher aux fichiers collectés.
+    let created = crate::seed::seed_defaults(&cfg.data_dir).map_err(|e| {
+        format!(
+            "valeurs par défaut impossibles à écrire ({}) : {}",
+            cfg.data_dir.display(),
+            e.kind()
+        )
+    })?;
+    for name in &created {
+        tracing::info!(fichier = %name, "valeur par défaut créée");
+    }
     let store = Store::new(cfg.data_dir.clone());
     let status = StatusBoard::new();
     let seed = seed_times_from_files(&store, Utc::now());
