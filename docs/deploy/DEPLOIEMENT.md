@@ -8,7 +8,7 @@ Ce guide installe la version Rust de « Veille emploi France » sur un serveur U
 - Chaque étape indique si elle est **LECTURE SEULE** (ne change rien) ou **MODIFIE LE SYSTÈME**, et ce qu'on doit voir si tout va bien.
 - Les commandes s'exécutent sur le serveur, connecté en tant qu'utilisateur `ubuntu` (qui a `sudo`), sauf mention « sur votre PC ».
 - Si un résultat ne ressemble pas au « résultat attendu », **arrêtez-vous** et passez à la section « Dépannage » ; ne continuez pas pour voir.
-- Les étapes ne touchent que ce qui est propre à ce site : un utilisateur `veille`, deux dossiers, un service systemd, un fichier nginx. Rien d'existant n'est modifié.
+- Les étapes ne touchent que ce qui est propre à ce site : un utilisateur `veille`, deux dossiers, un service systemd, un fichier nginx, plus une chaîne Rust dédiée installée à côté de celle du serveur. Rien d'existant n'est modifié (la chaîne Rust par défaut et les autres applications ne sont pas touchées).
 
 > **Ce qu'il ne faut pas faire**
 >
@@ -53,29 +53,41 @@ df -h /
 
 ### 1.2 Compilateur Rust
 
-**Ce que ça fait** : affiche la version de `rustc`. Le programme nécessite **rustc 1.88 ou plus récent** (une dépendance l'exige).
+**Principe** : le programme nécessite **rustc 1.88 ou plus récent** (une dépendance l'exige) ; il a été compilé et testé avec la version **1.95.0**. Pour ne rien changer aux autres applications Rust du serveur, on **ne touche pas à la chaîne Rust par défaut** : on installe à côté une chaîne dédiée, 1.95.0, et on ne l'utilise que pour ce programme (`cargo +1.95.0 ...`). La chaîne par défaut du serveur et les autres applications ne sont pas affectées.
+
+**Ce que ça fait** : montre la chaîne Rust par défaut et les chaînes installées (LECTURE SEULE).
 
 ```bash
-rustc --version
+rustup show
 ```
 
-**Résultat attendu** : `rustc 1.88.0` ou un numéro supérieur. Si la commande est introuvable, chargez l'environnement Rust puis recommencez :
+```bash
+rustup toolchain list
+```
+
+**Résultat attendu** : la liste des chaînes, dont la chaîne par défaut (`default`). Notez-la, vous ne la modifierez pas. Si la commande est introuvable, chargez l'environnement Rust puis recommencez (cette commande ne vaut que pour la session de terminal en cours : à répéter à chaque nouvelle connexion, sauf si `~/.profile` charge déjà `~/.cargo/env`) :
 
 ```bash
 . "$HOME/.cargo/env"
 ```
 
-Si la version est **inférieure à 1.88**, mettez à jour la chaîne Rust de l'utilisateur `ubuntu` (**MODIFIE LE SYSTÈME**, uniquement dans `~/.cargo` et `~/.rustup`) :
+Si `1.95.0` apparaît déjà dans la liste, passez à l'étape 1.3. Sinon, installez-la (**MODIFIE LE SYSTÈME** : environ 600 Mo sous `~/.rustup`, rien d'autre ; réversible avec `rustup toolchain uninstall 1.95.0`) :
 
 ```bash
-rustup update stable
+rustup toolchain install 1.95.0 --profile minimal
 ```
 
-Puis relancez `rustc --version` : il doit afficher 1.88 ou plus. Les autres applications Rust du serveur utilisent la même chaîne : cette mise à jour ne recompile rien tant qu'on ne relance pas leur compilation.
+**Résultat attendu** : `installed - rustc 1.95.0 ...`. Contrôle :
+
+```bash
+rustc +1.95.0 --version
+```
+
+Résultat : `rustc 1.95.0 ...`. **Ne lancez jamais `rustup default` ni `rustup update`** pour ce guide : ils changeraient la compilation des autres applications.
 
 ### 1.3 Outils annexes
 
-**Ce que ça fait** : vérifie que `git` et `cargo` sont présents.
+**Ce que ça fait** : vérifie que `git` et `cargo` sont présents (version par défaut, à titre d'information).
 
 ```bash
 git --version && cargo --version
@@ -106,6 +118,14 @@ ls /etc/nginx/sites-enabled
 ```
 
 **Résultat attendu** : une liste de fichiers ou de liens. Il ne doit pas y avoir de `veille-emploi.conf`. Ne les ouvrez pas, ne les modifiez pas.
+
+**Ce que ça fait** : cherche si le nom du site est déjà utilisé quelque part dans la configuration nginx. Un nom en double n'est **pas** détecté par `nginx -t` : notre bloc serait ignoré en silence, et certbot pourrait modifier le fichier d'un autre site.
+
+```bash
+sudo grep -rn "ecostat21" /etc/nginx/
+```
+
+**Résultat attendu** : **aucune sortie**. Si une ligne apparaît, **arrêtez-vous** et signalez-le : ne continuez pas.
 
 ### 1.6 certbot déjà installé ?
 
@@ -140,6 +160,16 @@ id veille
 ```
 
 **Résultat attendu** : `id: 'veille': no such user`. Si l'utilisateur existe déjà, ne le recréez pas : sautez la création à l'étape 2.
+
+### 1.9 La branche est-elle publiée ?
+
+**Ce que ça fait** : vérifie que la branche à installer existe sur le dépôt public.
+
+```bash
+git ls-remote --heads https://github.com/clemPerrousset/veille-emploi-france.git rust-port
+```
+
+**Résultat attendu** : une ligne se terminant par `refs/heads/rust-port`. Si la sortie est **vide**, **arrêtez-vous** : la branche n'est pas encore publiée.
 
 ---
 
@@ -176,7 +206,7 @@ sudo install -d -o veille -g veille -m 750 /var/lib/veille-emploi /var/lib/veill
 **Résultat attendu** : aucune sortie. Contrôle (LECTURE SEULE) :
 
 ```bash
-ls -ld /opt/veille-emploi /var/lib/veille-emploi /var/lib/veille-emploi/data
+sudo ls -ld /opt/veille-emploi /var/lib/veille-emploi /var/lib/veille-emploi/data
 ```
 
 Résultat : trois lignes ; les deux dernières appartiennent à `veille veille`.
@@ -211,11 +241,13 @@ git clone --branch rust-port --single-branch https://github.com/clemPerrousset/v
 
 **MODIFIE LE SYSTÈME** (écrit dans `~/veille-emploi-src/server/target`, de l'ordre de 1 à 2 Go). La compilation est limitée à 2 tâches et à basse priorité pour ne pas gêner les autres applications ; elle peut durer plusieurs minutes.
 
+La commande utilise la chaîne dédiée `+1.95.0` (étape 1.2), jamais la chaîne par défaut. Si la commande `cargo` est introuvable, rechargez l'environnement avec `. "$HOME/.cargo/env"` (à refaire à chaque nouvelle session).
+
 ```bash
-cd "$HOME/veille-emploi-src/server" && CARGO_BUILD_JOBS=2 nice cargo build --release
+cd "$HOME/veille-emploi-src/server" && CARGO_BUILD_JOBS=2 nice cargo +1.95.0 build --release
 ```
 
-**Résultat attendu** : se termine par `Finished release [optimized] target(s) in ...`. Si l'erreur mentionne une version de `rustc` trop ancienne, voir « Dépannage ».
+**Résultat attendu** : se termine par ``Finished `release` profile [optimized] target(s) in ...``. Si l'erreur mentionne une version de `rustc` trop ancienne, voir « Dépannage ».
 
 ### 3.4 Installer le binaire
 
@@ -255,7 +287,7 @@ Le fichier `/etc/veille-emploi.env` contient la clé France Travail. Il est lu p
 
 ### 4.1 Créer le fichier vide, avec les bons droits
 
-**MODIFIE LE SYSTÈME.** On crée le fichier **avant** d'y mettre quoi que ce soit, pour qu'il n'existe jamais avec des droits trop larges.
+**MODIFIE LE SYSTÈME.** On crée le fichier **avant** d'y mettre quoi que ce soit, pour qu'il n'existe jamais avec des droits trop larges. **Ne relancez pas cette commande si le fichier existe déjà** : elle le viderait et effacerait la clé. Pour modifier le fichier ensuite, utilisez `sudoedit` (étape 4.2).
 
 ```bash
 sudo install -m 600 -o root -g root /dev/null /etc/veille-emploi.env
@@ -268,7 +300,7 @@ sudo install -m 600 -o root -g root /dev/null /etc/veille-emploi.env
 **MODIFIE LE SYSTÈME.** Ouvrez le fichier avec l'éditeur sécurisé de `sudo` (il travaille sur une copie temporaire et réécrit le fichier à l'enregistrement).
 
 ```bash
-sudoedit /etc/veille-emploi.env
+SUDO_EDITOR=nano sudoedit /etc/veille-emploi.env
 ```
 
 Dans l'éditeur (`nano` : enregistrer avec Ctrl+O puis Entrée, quitter avec Ctrl+X), tapez **ces quatre lignes**, en remplaçant les deux premières valeurs par celles de votre application sur francetravail.io. Pas d'espace autour du `=`, pas de guillemets.
@@ -310,7 +342,7 @@ Les fichiers `rome.js` et `tech.js` viennent de l'API France Travail et ne sont 
 
 ### 5.1 Envoyer les fichiers vers un dossier temporaire du serveur (sur votre PC)
 
-**Sur votre PC, dans PowerShell.** Cette commande vous demande l'adresse du serveur (`<IP_DU_SERVEUR>`, la même qu'à l'étape 1.4) ; rien n'est modifié.
+**Sur votre PC, dans PowerShell.** Cette commande vous demande l'adresse du serveur (`<IP_DU_SERVEUR>`, la même qu'à l'étape 1.4) ; rien n'est modifié. **Faites cette étape et la suivante (`scp`) dans la MÊME fenêtre PowerShell** : la variable n'existe que dans la session où elle a été définie. (Variante : tapez l'adresse directement dans la ligne `scp`, à la place de `${IP_SERVEUR}`.)
 
 ```powershell
 $IP_SERVEUR = Read-Host "Adresse du serveur"
@@ -341,7 +373,7 @@ rm /tmp/rome.js /tmp/tech.js
 Contrôle (LECTURE SEULE) :
 
 ```bash
-ls -l /var/lib/veille-emploi/data
+sudo ls -l /var/lib/veille-emploi/data
 ```
 
 **Résultat attendu** : `rome.js` et `tech.js`, propriétaire `veille veille`, droits `-rw-r-----`.
@@ -354,7 +386,7 @@ ls -l /var/lib/veille-emploi/data
 
 ### 6.1 Créer le fichier de service
 
-**MODIFIE LE SYSTÈME** (crée un fichier dans `/etc/systemd/system`). Le bloc est en plusieurs lignes : copiez-le en entier.
+**MODIFIE LE SYSTÈME** (crée un fichier dans `/etc/systemd/system`). Le bloc est en plusieurs lignes : copiez-le en entier. **Ne relancez pas cette commande si le fichier existe déjà** (elle l'écraserait) : pour le modifier ensuite, utilisez `SUDO_EDITOR=nano sudoedit /etc/systemd/system/veille-emploi.service`.
 
 ```bash
 sudo tee /etc/systemd/system/veille-emploi.service > /dev/null <<'EOF'
@@ -362,6 +394,8 @@ sudo tee /etc/systemd/system/veille-emploi.service > /dev/null <<'EOF'
 Description=Veille emploi France (serveur Rust)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -380,7 +414,7 @@ ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/var/lib/veille-emploi
 ProtectKernelTunables=true
-RestrictAddressFamilies=AF_INET AF_INET6
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=
 LockPersonality=true
 
@@ -450,7 +484,7 @@ On ajoute un **nouveau fichier** : aucun fichier existant n'est ouvert.
 
 ### 7.1 Créer le bloc `server`
 
-**MODIFIE LE SYSTÈME** (crée un fichier dans `sites-available`, rien n'est encore actif). Remplacez `3210` par votre port si vous en avez choisi un autre (`sudoedit` après coup). Les guillemets autour de `EOF` empêchent le shell de toucher aux `$` de la configuration.
+**MODIFIE LE SYSTÈME** (crée un fichier dans `sites-available`, rien n'est encore actif). Remplacez `3210` par votre port si vous en avez choisi un autre (avec `sudoedit` après coup). Les guillemets autour de `EOF` empêchent le shell de toucher aux `$` de la configuration. **Ne relancez pas cette commande si le fichier existe déjà, surtout après certbot** : elle effacerait le bloc HTTPS que certbot y a ajouté. Pour modifier ce fichier ensuite, utilisez `SUDO_EDITOR=nano sudoedit /etc/nginx/sites-available/veille-emploi.conf`.
 
 ```bash
 sudo tee /etc/nginx/sites-available/veille-emploi.conf > /dev/null <<'EOF'
@@ -475,6 +509,8 @@ EOF
 
 Il n'y a volontairement **aucun `add_header`** ni compression côté nginx : le programme s'en charge.
 
+Si `nginx -t` (étape 7.3) se plaint de `[::]` ou de « Address family not supported » (serveur sans IPv6), supprimez les deux lignes `listen [::]:...` du fichier (avec `sudoedit`) et retestez.
+
 ### 7.2 L'activer
 
 **MODIFIE LE SYSTÈME** (crée un lien dans `sites-enabled` ; nginx n'en tient pas compte tant qu'on ne le recharge pas).
@@ -491,7 +527,9 @@ sudo ln -s /etc/nginx/sites-available/veille-emploi.conf /etc/nginx/sites-enable
 sudo nginx -t
 ```
 
-**Résultat attendu** : `syntax is ok` et `test is successful`.
+**Résultat attendu** : `syntax is ok` et `test is successful`, **sans aucun avertissement** `[warn]`.
+
+**Un avertissement `conflicting server name "ecostat21.applicationrush.fr" ... ignored` est à traiter comme une ERREUR** : notre bloc serait ignoré en silence au profit d'un autre site. Dans ce cas, procédez comme ci-dessous (retirer notre lien, retester), puis arrêtez-vous et signalez-le.
 
 **Si `nginx -t` affiche une erreur : NE RECHARGEZ PAS nginx.** Les autres sites continuent de fonctionner tant qu'on ne recharge pas. Retirez simplement notre lien, puis retestez :
 
@@ -531,11 +569,25 @@ Deux situations sont possibles selon ce que vous avez vu à l'étape 1.6.
 
 ### Cas A : aucun certificat ne couvre le site (certbot installé ou à installer)
 
-Si `which certbot` n'avait rien affiché, installez-le d'abord (**MODIFIE LE SYSTÈME**) :
+Si `which certbot` n'avait rien affiché, installez-le d'abord (**MODIFIE LE SYSTÈME**). Mettez d'abord à jour la liste des paquets :
+
+```bash
+sudo apt update
+```
 
 ```bash
 sudo apt install certbot python3-certbot-nginx
 ```
+
+**Lisez la liste de confirmation avant de répondre** : elle ne doit installer que certbot et ses dépendances. Si elle met à jour des paquets sans rapport (nginx, openssl...), répondez `n` pour annuler et signalez-le.
+
+Que certbot soit déjà installé ou non, vérifiez (LECTURE SEULE) que son module nginx est disponible :
+
+```bash
+sudo certbot plugins
+```
+
+**Résultat attendu** : la liste contient `* nginx`. Si ce n'est pas le cas (certbot installé par snap ou par apt sans le module), **arrêtez-vous** et signalez-le plutôt que de modifier la configuration à la main.
 
 Demandez ensuite le certificat (**MODIFIE LE SYSTÈME** : certbot modifie **notre** fichier `veille-emploi.conf`, ajoute le bloc HTTPS et la redirection, puis recharge nginx après l'avoir testé). Il vous demandera une adresse e-mail et l'acceptation des conditions. L'option `-d` limite l'opération à ce nom : les autres sites ne sont pas concernés.
 
@@ -572,6 +624,8 @@ server {
 
     ssl_certificate     /etc/letsencrypt/live/NOM_DU_CERTIFICAT/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/NOM_DU_CERTIFICAT/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
     location / {
         limit_except GET HEAD { deny all; }
@@ -584,6 +638,12 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
+```
+
+Les deux lignes `include .../options-ssl-nginx.conf` et `ssl_dhparam ...` reprennent les réglages TLS de certbot (même configuration que dans le cas A) ; elles ne s'appliquent que si ces fichiers existent. Vérifiez-le (LECTURE SEULE) ; si l'un manque, supprimez la ligne correspondante :
+
+```bash
+sudo ls /etc/letsencrypt/options-ssl-nginx.conf /etc/letsencrypt/ssl-dhparams.pem
 ```
 
 Testez, **et rechargez seulement si le test réussit** :
@@ -600,13 +660,13 @@ Si le test échoue, appliquez la consigne de l'étape 7.3 : ne rechargez pas, re
 
 ### 8.1 Renouvellement automatique (cas A)
 
-**SIMULATION** : teste un renouvellement sans rien changer de définitif.
+**SIMULATION** : teste le renouvellement **de notre certificat seulement**, sans rien changer de définitif.
 
 ```bash
-sudo certbot renew --dry-run
+sudo certbot renew --dry-run --cert-name ecostat21.applicationrush.fr
 ```
 
-**Résultat attendu** : `Congratulations, all simulated renewals succeeded`. Dans le cas B, le renouvellement du certificat existant est déjà géré par la méthode en place : rien à faire ici.
+**Résultat attendu** : `Congratulations, all simulated renewals succeeded`. **Ne lancez jamais `certbot renew` sans `--cert-name` sur ce serveur** : la commande testerait tous les certificats et exécuterait les commandes avant/après renouvellement des autres sites (arrêt ou redémarrage possibles). Dans le cas B, le renouvellement du certificat existant est déjà géré par la méthode en place : rien à faire ici (et ne lancez pas cette simulation, le certificat n'a pas ce nom).
 
 ### 8.2 Vérifier HTTPS
 
@@ -681,9 +741,12 @@ curl -s https://ecostat21.applicationrush.fr/health
 Dans un navigateur, ouvrez `https://ecostat21.applicationrush.fr` :
 
 - la page se charge avec le cadenas (certificat valide) ;
-- parcourez les thèmes (Emploi, Exposition à l'IA, Tech, Mon suivi), les deux niveaux de détail, quelques périodes et métiers : les graphiques s'affichent, sans message d'erreur ;
-- le **pied de page** affiche la date de dernière collecte de chaque source ; elles doivent correspondre à `/health` ;
+- la page se charge **sans erreur dans la console du navigateur** (touche F12, onglet Console) ;
+- les **quatre thèmes** (Emploi, Exposition à l'IA, Tech, Mon suivi) fonctionnent : chacun affiche ses graphiques ;
+- le **pied de page** affiche les dates de collecte de chaque source ; elles doivent correspondre à `/health` ;
 - l'écran « Sources, limites et licences » est accessible.
+
+(Le contrôle automatique des 133 combinaisons de l'interface est un test de développement, décrit dans le README, avec `tests/ui/matrix.js` : il n'est pas à faire sur le serveur.)
 
 Si la console du navigateur (touche F12) signale un blocage « Content Security Policy », c'est qu'un en-tête a été ajouté ou répété côté nginx : retirez tout `add_header` autre que HSTS.
 
@@ -729,10 +792,10 @@ df -h /
 git -C "$HOME/veille-emploi-src" pull --ff-only
 ```
 
-3. Recompiler (comme à l'étape 3.3 ; plusieurs minutes) :
+3. Recompiler avec la chaîne dédiée (comme à l'étape 3.3 ; plusieurs minutes ; résultat attendu : ``Finished `release` profile [optimized] target(s) in ...``) :
 
 ```bash
-cd "$HOME/veille-emploi-src/server" && CARGO_BUILD_JOBS=2 nice cargo build --release
+cd "$HOME/veille-emploi-src/server" && CARGO_BUILD_JOBS=2 nice cargo +1.95.0 build --release
 ```
 
 4. **Garder l'ancien binaire** pour pouvoir revenir en arrière :
@@ -787,7 +850,7 @@ curl -s http://127.0.0.1:3210/health
 
 Le programme collecte seul selon son planning ; ceci sert à relancer à la main. La commande `once` affiche **une seule ligne de résultat en français** (les détails vont dans les journaux) et se termine par le code 0 (succès) ou 1 (échec). Un nom de collecte inconnu affiche l'aide et se termine par 2.
 
-La méthode ci-dessous fait lire le fichier d'environnement **par systemd** : la clé n'apparaît ni dans `ps`, ni dans l'historique du shell, ni à l'écran. Évitez de la lancer pendant qu'une collecte est déjà en cours (voir `journalctl -u veille-emploi -n 20 --no-pager`).
+La méthode ci-dessous fait lire le fichier d'environnement **par systemd** : la clé n'apparaît ni dans `ps`, ni dans l'historique du shell, ni à l'écran. Ne la lancez pas pendant qu'une collecte planifiée est en cours : évitez de 02:30 à 02:45 UTC chaque jour, et le lundi de 03:00 à 03:30 UTC ; ou vérifiez que `journalctl -u veille-emploi -n 20 --no-pager` ne montre aucun `collecte : début` sans `réussie` ou `échec` correspondant.
 
 La collecte `core` (aucune clé requise) :
 
@@ -800,7 +863,7 @@ sudo systemd-run --pipe --wait --collect --uid=veille --gid=veille --property=En
 Si `systemd-run` refuse l'une des propriétés, la collecte `core`, qui n'a pas besoin de clé, peut se lancer ainsi :
 
 ```bash
-sudo -u veille env VE_DATA_DIR=/var/lib/veille-emploi/data /opt/veille-emploi/veille_emploi once core
+sudo -u veille env -C /var/lib/veille-emploi VE_DATA_DIR=/var/lib/veille-emploi/data /opt/veille-emploi/veille_emploi once core
 ```
 
 ---
@@ -811,10 +874,10 @@ sudo -u veille env VE_DATA_DIR=/var/lib/veille-emploi/data /opt/veille-emploi/ve
 
 - Vérifiez que le DNS pointe vers ce serveur (étape 1.4). Un enregistrement qui pointe ailleurs, ou qui vient d'être changé, fait échouer la validation : attendez et recommencez.
 - Vérifiez que le port 80 est joignable depuis Internet (pare-feu, groupe de sécurité du fournisseur) : Let's Encrypt a besoin d'y accéder. Contrôle, depuis un autre réseau que le serveur : `curl -I http://ecostat21.applicationrush.fr`.
-- Let's Encrypt limite le nombre de tentatives : après plusieurs échecs, attendez une heure, et testez d'abord avec une simulation, qui ne consomme pas la limite :
+- Let's Encrypt limite le nombre de tentatives : après plusieurs échecs, attendez une heure, et testez d'abord avec une simulation, qui ne consomme pas la limite et ne modifie aucun fichier :
 
 ```bash
-sudo certbot --nginx -d ecostat21.applicationrush.fr --dry-run
+sudo certbot certonly --nginx -d ecostat21.applicationrush.fr --dry-run
 ```
 
 **nginx répond « 502 Bad Gateway ».** Le service est arrêté, ou le port de `proxy_pass` n'est pas celui de `VE_BIND`.
@@ -837,7 +900,9 @@ curl -s http://127.0.0.1:3210/health
 
 Regardez `files` : un fichier avec `exists: false` explique la vue manquante. `data.js` manquant : la collecte `core` n'a pas encore réussi (voir `journalctl -u veille-emploi -n 100 --no-pager`, ou forcez-la, étape 10). `rome.js` ou `tech.js` manquants : refaites l'étape 5, ou vérifiez que `FT_CLIENT_ID` et `FT_CLIENT_SECRET` figurent bien dans `/etc/veille-emploi.env` (étape 4.3) et que l'API « Marché du travail » est ajoutée à l'application sur francetravail.io. Un `last_error` sous `collectors` donne la cause de la dernière erreur.
 
-**Erreurs de résolution de noms dans les journaux (collecte impossible).** La restriction `RestrictAddressFamilies=AF_INET AF_INET6` interdit les sockets Unix ; si le serveur résout les noms par un mécanisme qui en a besoin, ajoutez `AF_UNIX` à cette ligne dans `/etc/systemd/system/veille-emploi.service` (avec `sudoedit`), puis :
+**Le service s'arrête définitivement après plusieurs échecs (`start-limit-hit`).** C'est voulu (5 essais en 5 minutes) : lisez la cause dans `journalctl -u veille-emploi -n 50 --no-pager`, corrigez-la, puis `sudo systemctl reset-failed veille-emploi` et `sudo systemctl start veille-emploi`.
+
+**Erreurs réseau ou de résolution de noms dans les journaux (collecte impossible).** Le service autorise `AF_UNIX`, `AF_INET` et `AF_INET6`. Si le problème persiste, vérifiez que `RestrictAddressFamilies` n'a pas été modifié dans `/etc/systemd/system/veille-emploi.service` (avec `sudoedit`), puis :
 
 ```bash
 sudo systemctl daemon-reload
@@ -853,9 +918,15 @@ sudo systemctl restart veille-emploi
 sudo du -xh --max-depth=1 /var | sort -h | tail
 ```
 
-Ne supprimez jamais de fichiers appartenant aux autres applications.
+Ne supprimez jamais de fichiers appartenant aux autres applications. Pour connaître la place prise par Rust (lecture seule) :
 
-**La compilation échoue en parlant d'une version de `rustc`.** La version est trop ancienne (il faut 1.88 ou plus). Lancez `rustup update stable`, vérifiez avec `rustc --version`, puis relancez la compilation.
+```bash
+du -sh ~/.cargo/registry ~/.rustup
+```
+
+Ne supprimez pas ces dossiers : ils servent aussi aux autres applications Rust. Si besoin, la chaîne dédiée se retire seule avec `rustup toolchain uninstall 1.95.0` (à refaire ensuite à l'étape 1.2 pour recompiler).
+
+**La compilation échoue en parlant d'une version de `rustc`.** Le compilateur utilisé est trop ancien (il faut 1.88 ou plus) : la commande n'a sans doute pas utilisé `+1.95.0`. Vérifiez avec `rustc +1.95.0 --version` (si la chaîne est absente, refaites l'étape 1.2), puis relancez la compilation avec `cargo +1.95.0`. Ne modifiez pas la chaîne par défaut du serveur.
 
 **La compilation est interrompue (`signal: 9, SIGKILL`).** Mémoire insuffisante. Ne forcez pas : vérifiez la mémoire disponible avec `free -h` et ne recompilez que lorsqu'elle est suffisante (les autres applications ne doivent pas être gênées).
 

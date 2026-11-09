@@ -99,14 +99,18 @@ Il faut Rust 1.88 ou plus récent. Pour compiler, le dépôt doit être cloné e
 cd server && cargo test
 ```
 
+Le programme lit un fichier `.env` du **dossier courant**. Le tien est à la racine du dépôt : lance donc le serveur depuis la racine (ou exporte les variables toi-même).
+
 ```bash
-cd server && VE_DATA_DIR=../data cargo run --release -- serve
+VE_DATA_DIR=./data cargo run --release --manifest-path server/Cargo.toml -- serve
 ```
+
+Au démarrage, une collecte en retard (par exemple un `data/data.js` ancien) est relancée environ 30 secondes plus tard et **peut réécrire les fichiers de `data/`**. Pour un essai local sans aucune collecte, ajoute `VE_DISABLE_SCHEDULER=1` devant la commande.
 
 Le site est alors servi sur `http://127.0.0.1:3210`. `/health` renvoie l'état des collectes et l'âge des fichiers. Pour lancer une collecte à la main (une ligne de résultat sur la sortie standard, les journaux sur la sortie d'erreur, code de sortie 0 ou 1) :
 
 ```bash
-cd server && VE_DATA_DIR=../data cargo run --release -- once core
+VE_DATA_DIR=./data cargo run --release --manifest-path server/Cargo.toml -- once core
 ```
 
 Les tâches possibles sont `core` (Indeed, Eurostat, DARES), `rome` et `tech` (France Travail, clé requise). Les collectes tournent aussi seules : `core` chaque jour à 02:30 UTC, France Travail le lundi à 03:00 UTC.
@@ -119,6 +123,8 @@ Les tâches possibles sont `core` (Indeed, Eurostat, DARES), `rome` et `tech` (F
 | `VE_DISABLE_SCHEDULER` | `1` ou `true` : désactive les collectes planifiées (**tests uniquement**) | désactivé |
 
 Un fichier `.env` du dossier courant est lu au démarrage (l'environnement du processus a priorité) ; en production, on utilise à la place un fichier d'environnement systemd. `ai_exposure.js` et `ai_rome.js` sont créés au premier démarrage à partir de valeurs par défaut incorporées, sans jamais écraser un fichier existant.
+
+**Test de l'interface (développeurs)** : `tests/ui/matrix.js` parcourt automatiquement les 133 combinaisons de l'interface ; ce n'est pas un contrôle à faire sur le serveur.
 
 **Mise en ligne** : suivez [`docs/deploy/DEPLOIEMENT.md`](docs/deploy/DEPLOIEMENT.md) (compilation sur le serveur, service systemd, nginx, HTTPS avec Let's Encrypt, exploitation).
 
