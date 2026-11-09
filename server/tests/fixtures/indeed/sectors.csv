@@ -1,0 +1,130 @@
+date,jobcountry,indeed_job_postings_index,variable,display_name
+2020-02-01,FR,100,total postings,Accounting
+2020-02-02,FR,99.2,total postings,Accounting
+2020-02-03,FR,98.27,total postings,Accounting
+2020-02-04,FR,97.3,total postings,Accounting
+2020-02-05,FR,97.31,total postings,Accounting
+2020-02-06,FR,97.37,total postings,Accounting
+2020-02-07,FR,97.43,total postings,Accounting
+2020-02-08,FR,97.36,total postings,Accounting
+2020-02-09,FR,97.24,total postings,Accounting
+2020-02-10,FR,97.19,total postings,Accounting
+2020-02-11,FR,97.06,total postings,Accounting
+2020-02-12,FR,96.83,total postings,Accounting
+2020-02-13,FR,96.64,total postings,Accounting
+2020-02-14,FR,96.45,total postings,Accounting
+2020-02-15,FR,96.28,total postings,Accounting
+2020-02-16,FR,96.19,total postings,Accounting
+2020-02-17,FR,96.21,total postings,Accounting
+2020-02-18,FR,95.86,total postings,Accounting
+2020-02-19,FR,95.62,total postings,Accounting
+2020-02-20,FR,95.42,total postings,Accounting
+2020-02-21,FR,95.15,total postings,Accounting
+2020-02-22,FR,94.95,total postings,Accounting
+2020-02-23,FR,94.7,total postings,Accounting
+2020-02-24,FR,94.32,total postings,Accounting
+2020-02-25,FR,94.33,total postings,Accounting
+2020-02-26,FR,94.28,total postings,Accounting
+2020-02-27,FR,94.21,total postings,Accounting
+2020-02-28,FR,94.1,total postings,Accounting
+2020-02-29,FR,94.12,total postings,Accounting
+2020-03-01,FR,94.3,total postings,Accounting
+2020-03-02,FR,94.45,total postings,Accounting
+2020-03-03,FR,94.47,total postings,Accounting
+2020-03-04,FR,94.59,total postings,Accounting
+2020-03-05,FR,94.62,total postings,Accounting
+2020-03-06,FR,94.7,total postings,Accounting
+2020-03-07,FR,94.6,total postings,Accounting
+2020-03-08,FR,94.42,total postings,Accounting
+2020-03-09,FR,94.27,total postings,Accounting
+2020-03-10,FR,94.32,total postings,Accounting
+2020-03-11,FR,94.24,total postings,Accounting
+2020-02-01,FR,100,total postings,Banking & Finance
+2020-02-02,FR,99.75,total postings,Banking & Finance
+2020-02-03,FR,99.45,total postings,Banking & Finance
+2020-02-04,FR,99.23,total postings,Banking & Finance
+2020-02-05,FR,99.25,total postings,Banking & Finance
+2020-02-06,FR,99.15,total postings,Banking & Finance
+2020-02-07,FR,99.06,total postings,Banking & Finance
+2020-02-08,FR,99.12,total postings,Banking & Finance
+2020-02-09,FR,99.09,total postings,Banking & Finance
+2020-02-10,FR,99.2,total postings,Banking & Finance
+2020-02-11,FR,99.22,total postings,Banking & Finance
+2020-02-12,FR,99.3,total postings,Banking & Finance
+2020-02-13,FR,99.48,total postings,Banking & Finance
+2020-02-14,FR,99.68,total postings,Banking & Finance
+2020-02-15,FR,99.66,total postings,Banking & Finance
+2020-02-16,FR,99.75,total postings,Banking & Finance
+2020-02-17,FR,99.78,total postings,Banking & Finance
+2020-02-18,FR,99.43,total postings,Banking & Finance
+2020-02-19,FR,99.1,total postings,Banking & Finance
+2020-02-20,FR,98.74,total postings,Banking & Finance
+2020-02-21,FR,98.24,total postings,Banking & Finance
+2020-02-22,FR,97.76,total postings,Banking & Finance
+2020-02-23,FR,97.19,total postings,Banking & Finance
+2020-02-24,FR,96.76,total postings,Banking & Finance
+2020-02-25,FR,96.66,total postings,Banking & Finance
+2020-02-26,FR,96.54,total postings,Banking & Finance
+2020-02-27,FR,96.28,total postings,Banking & Finance
+2020-02-28,FR,96.16,total postings,Banking & Finance
+2020-02-29,FR,96.11,total postings,Banking & Finance
+2020-03-01,FR,96.18,total postings,Banking & Finance
+2020-03-02,FR,96.14,total postings,Banking & Finance
+2020-03-03,FR,96.05,total postings,Banking & Finance
+2020-03-04,FR,95.96,total postings,Banking & Finance
+2020-03-05,FR,96.03,total postings,Banking & Finance
+2020-03-06,FR,96,total postings,Banking & Finance
+2020-03-07,FR,96.1,total postings,Banking & Finance
+2020-03-08,FR,96.15,total postings,Banking & Finance
+2020-03-09,FR,96.21,total postings,Banking & Finance
+2020-03-10,FR,96.41,total postings,Banking & Finance
+2020-03-11,FR,96.57,total postings,Banking & Finance
+2020-02-01,FR,100,total postings,"IT Infrastructure, Operations & Support"
+2020-02-02,FR,100.09,total postings,"IT Infrastructure, Operations & Support"
+2020-02-03,FR,100.25,total postings,"IT Infrastructure, Operations & Support"
+2020-02-04,FR,100.23,total postings,"IT Infrastructure, Operations & Support"
+2020-02-05,FR,100.29,total postings,"IT Infrastructure, Operations & Support"
+2020-02-06,FR,100.25,total postings,"IT Infrastructure, Operations & Support"
+2020-02-07,FR,100.09,total postings,"IT Infrastructure, Operations & Support"
+2020-02-08,FR,100.09,total postings,"IT Infrastructure, Operations & Support"
+2020-02-09,FR,99.98,total postings,"IT Infrastructure, Operations & Support"
+2020-02-10,FR,99.8,total postings,"IT Infrastructure, Operations & Support"
+2020-02-11,FR,99.78,total postings,"IT Infrastructure, Operations & Support"
+2020-02-12,FR,100.1,total postings,"IT Infrastructure, Operations & Support"
+2020-02-13,FR,100.59,total postings,"IT Infrastructure, Operations & Support"
+2020-02-14,FR,101.4,total postings,"IT Infrastructure, Operations & Support"
+2020-02-15,FR,102.01,total postings,"IT Infrastructure, Operations & Support"
+2020-02-16,FR,102.69,total postings,"IT Infrastructure, Operations & Support"
+2020-02-17,FR,103.25,total postings,"IT Infrastructure, Operations & Support"
+2020-02-18,FR,103.3,total postings,"IT Infrastructure, Operations & Support"
+2020-02-19,FR,103.04,total postings,"IT Infrastructure, Operations & Support"
+2020-02-20,FR,103.05,total postings,"IT Infrastructure, Operations & Support"
+2020-02-21,FR,102.51,total postings,"IT Infrastructure, Operations & Support"
+2020-02-22,FR,102.27,total postings,"IT Infrastructure, Operations & Support"
+2020-02-23,FR,102.06,total postings,"IT Infrastructure, Operations & Support"
+2020-02-24,FR,102.06,total postings,"IT Infrastructure, Operations & Support"
+2020-02-25,FR,102.42,total postings,"IT Infrastructure, Operations & Support"
+2020-02-26,FR,102.98,total postings,"IT Infrastructure, Operations & Support"
+2020-02-27,FR,103.4,total postings,"IT Infrastructure, Operations & Support"
+2020-02-28,FR,104.22,total postings,"IT Infrastructure, Operations & Support"
+2020-02-29,FR,104.73,total postings,"IT Infrastructure, Operations & Support"
+2020-03-01,FR,105.19,total postings,"IT Infrastructure, Operations & Support"
+2020-03-02,FR,105.54,total postings,"IT Infrastructure, Operations & Support"
+2020-03-03,FR,105.73,total postings,"IT Infrastructure, Operations & Support"
+2020-03-04,FR,105.95,total postings,"IT Infrastructure, Operations & Support"
+2020-03-05,FR,105.94,total postings,"IT Infrastructure, Operations & Support"
+2020-03-06,FR,105.68,total postings,"IT Infrastructure, Operations & Support"
+2020-03-07,FR,105.34,total postings,"IT Infrastructure, Operations & Support"
+2020-03-08,FR,105.04,total postings,"IT Infrastructure, Operations & Support"
+2020-03-09,FR,104.69,total postings,"IT Infrastructure, Operations & Support"
+2020-03-10,FR,104.85,total postings,"IT Infrastructure, Operations & Support"
+2020-03-11,FR,104.93,total postings,"IT Infrastructure, Operations & Support"
+2020-02-01,FR,100,new postings,Accounting
+2020-02-02,FR,100.94,new postings,Accounting
+2020-02-03,FR,101.36,new postings,Accounting
+2020-02-01,FR,100,new postings,Banking & Finance
+2020-02-02,FR,98.33,new postings,Banking & Finance
+2020-02-03,FR,96.69,new postings,Banking & Finance
+2020-02-01,FR,100,new postings,"IT Infrastructure, Operations & Support"
+2020-02-02,FR,100.47,new postings,"IT Infrastructure, Operations & Support"
+2020-02-03,FR,100.51,new postings,"IT Infrastructure, Operations & Support"
