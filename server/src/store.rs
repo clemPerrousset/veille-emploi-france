@@ -84,6 +84,14 @@ impl Store {
         std::fs::read(self.dir.join(file))
     }
 
+    /// Date de modification du fichier de données (`None` s'il est absent ou inconnu).
+    pub fn modified(&self, file: &str) -> Option<std::time::SystemTime> {
+        if !Self::is_known(file) {
+            return None;
+        }
+        std::fs::metadata(self.dir.join(file)).ok()?.modified().ok()
+    }
+
     /// Âge du fichier de données en secondes (date de modification), `None` s'il est absent.
     pub fn age_seconds(&self, file: &str) -> Option<u64> {
         if !Self::is_known(file) {

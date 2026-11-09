@@ -16,6 +16,8 @@ use crate::config::Config;
 use crate::status::StatusBoard;
 use crate::store::Store;
 use chrono::{DateTime, Datelike, Duration as Span, NaiveDate, TimeZone, Utc, Weekday};
+use futures::FutureExt;
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -58,6 +60,28 @@ fn slot_on(day: NaiveDate, hour: u32, min: u32) -> DateTime<Utc> {
     Utc.from_utc_datetime(&t)
 }
 
+impl Every {
+    /// Durée nominale entre deux créneaux.
+    pub fn period(&self) -> Span {
+        match self {
+            Every::DailyAt { .. } => Span::days(1),
+            Every::WeeklyAt { .. } => Span::days(7),
+        }
+    }
+}
+
+/// Dates de dernière collecte supposées au démarrage, UNIQUEMENT pour la planification (date de
+/// modification des fichiers de données). Elles ne passent jamais par le `StatusBoard`, qui ne
+/// montre que des collectes réellement exécutées.
+pub type SeedTimes = BTreeMap<String, DateTime<Utc>>;
+
+/// Prochain lancement après un SUCCÈS à `t` : premier créneau strictement après `t` + demi-période.
+/// Écart minimal entre deux succès = la moitié de la période : un succès tardif ou obtenu après
+/// une reprise (02:20 au lieu de 02:30) ne déclenche pas une seconde collecte le même jour.
+pub fn next_after_success(t: DateTime<Utc>, every: &Every) -> DateTime<Utc> {
+    next_slot_after(t + every.period() / 2, every)
+}
+
 /// Premier créneau STRICTEMENT après `t`.
 pub fn next_slot_after(t: DateTime<Utc>, every: &Every) -> DateTime<Utc> {
     let mut day = t.date_naive();
@@ -78,8 +102,9 @@ pub fn next_slot_after(t: DateTime<Utc>, every: &Every) -> DateTime<Utc> {
     t + Span::days(8)
 }
 
-/// Prochain lancement. Sans succès connu : `now` + 30 s. Sinon le créneau qui suit `last_ok`,
-/// ou `now` si ce créneau est déjà passé (rattrapage après un arrêt prolongé).
+/// Prochain lancement. Sans succès connu : `now` + 30 s. Sinon le créneau qui suit `last_ok`
+/// (avec l'écart minimal d'une demi-période, voir `next_after_success`), ou `now` si ce créneau
+/// est déjà passé (rattrapage après un arrêt prolongé).
 pub fn next_due(
     now: DateTime<Utc>,
     last_ok: Option<DateTime<Utc>>,
@@ -87,7 +112,7 @@ pub fn next_due(
 ) -> DateTime<Utc> {
     match last_ok {
         None => now + Span::seconds(STARTUP_DELAY_SECS),
-        Some(ok) => next_slot_after(ok, every).max(now),
+        Some(ok) => next_after_success(ok, every).max(now),
     }
 }
 
@@ -167,6 +192,8 @@ pub struct Ctx {
     pub cfg: Config,
     /// Client France Travail, construit une fois au démarrage si les identifiants sont présents.
     pub ft: Option<crate::collect::ft::FtClient>,
+    /// Dates supposées de dernière collecte (planification seulement, voir `SeedTimes`).
+    pub seed: SeedTimes,
 }
 
 impl Runner for Ctx {
@@ -205,7 +232,19 @@ pub async fn run_job<R: Runner, C: WallClock>(
     job: Job,
 ) -> Result<(), CollectError> {
     tracing::info!(job = job.name(), "collecte : début");
-    let res = runner.run(job).await;
+    // Une panique dans un collecteur ne doit pas tuer le serveur ni l'autre boucle : elle devient
+    // un échec ordinaire (consigné, nouvel essai dans 1 h). Le message de la panique n'est jamais
+    // repris (il pourrait contenir des données).
+    let res = match std::panic::AssertUnwindSafe(runner.run(job))
+        .catch_unwind()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => Err(CollectError::Fetch(format!(
+            "panique interne {}",
+            job.name()
+        ))),
+    };
     let now = clock.now();
     match &res {
         Ok(()) => {
@@ -221,19 +260,22 @@ pub async fn run_job<R: Runner, C: WallClock>(
     res
 }
 
-fn last_ok_of(status: &StatusBoard, name: &str) -> Option<DateTime<Utc>> {
-    let s = status.snapshot();
-    let raw = s.get(name)?.last_ok.as_deref()?;
-    DateTime::parse_from_rfc3339(raw)
-        .ok()
-        .map(|d| d.with_timezone(&Utc))
+/// Dernier succès réel (tableau d'état), à défaut la date supposée au démarrage.
+fn last_ok_of(status: &StatusBoard, seed: &SeedTimes, name: &str) -> Option<DateTime<Utc>> {
+    let real = status
+        .snapshot()
+        .get(name)
+        .and_then(|s| s.last_ok.clone())
+        .and_then(|raw| DateTime::parse_from_rfc3339(&raw).ok())
+        .map(|d| d.with_timezone(&Utc));
+    real.or_else(|| seed.get(name).copied())
 }
 
 /// Plus ancien dernier succès du groupe ; `None` dès qu'un job n'en a aucun.
-fn group_last_ok(status: &StatusBoard, jobs: &[Job]) -> Option<DateTime<Utc>> {
+fn group_last_ok(status: &StatusBoard, seed: &SeedTimes, jobs: &[Job]) -> Option<DateTime<Utc>> {
     let mut oldest: Option<DateTime<Utc>> = None;
     for j in jobs {
-        let ok = last_ok_of(status, j.name())?;
+        let ok = last_ok_of(status, seed, j.name())?;
         oldest = Some(oldest.map_or(ok, |o| o.min(ok)));
     }
     oldest
@@ -259,11 +301,12 @@ pub async fn job_loop<R: Runner, C: WallClock>(
     runner: Arc<R>,
     clock: Arc<C>,
     status: StatusBoard,
+    seed: SeedTimes,
     jobs: Vec<Job>,
     every: Every,
 ) {
     let label = jobs.iter().map(|j| j.name()).collect::<Vec<_>>().join("+");
-    let mut due = next_due(clock.now(), group_last_ok(&status, &jobs), &every);
+    let mut due = next_due(clock.now(), group_last_ok(&status, &seed, &jobs), &every);
     tracing::info!(jobs = %label, prochain = %due, "planification");
     loop {
         sleep_until(&*clock, due).await;
@@ -275,7 +318,7 @@ pub async fn job_loop<R: Runner, C: WallClock>(
         due = if failed {
             retry_at(now)
         } else {
-            next_slot_after(now, &every)
+            next_after_success(now, &every)
         };
         tracing::info!(jobs = %label, prochain = %due, "planification");
     }
@@ -295,6 +338,7 @@ pub async fn run_forever_with<R: Runner, C: WallClock>(
     runner: Arc<R>,
     clock: Arc<C>,
     status: StatusBoard,
+    seed: SeedTimes,
     ft_enabled: bool,
 ) {
     if !ft_enabled {
@@ -302,17 +346,25 @@ pub async fn run_forever_with<R: Runner, C: WallClock>(
             "identifiants France Travail absents : collectes rome et tech désactivées (core reste actif)"
         );
     }
-    let loops = loops_to_start(ft_enabled)
-        .into_iter()
-        .map(|(jobs, every)| job_loop(runner.clone(), clock.clone(), status.clone(), jobs, every));
+    let loops = loops_to_start(ft_enabled).into_iter().map(|(jobs, every)| {
+        job_loop(
+            runner.clone(),
+            clock.clone(),
+            status.clone(),
+            seed.clone(),
+            jobs,
+            every,
+        )
+    });
     futures::future::join_all(loops).await;
 }
 
 /// Planificateur de production : `core` quotidien, France Travail hebdomadaire.
 pub async fn run_forever(ctx: Arc<Ctx>) {
     let status = ctx.status.clone();
+    let seed = ctx.seed.clone();
     let ft_enabled = ctx.ft.is_some();
-    run_forever_with(ctx, Arc::new(SystemWallClock), status, ft_enabled).await;
+    run_forever_with(ctx, Arc::new(SystemWallClock), status, seed, ft_enabled).await;
 }
 
 #[cfg(test)]
@@ -344,9 +396,30 @@ mod tests {
 
     #[test]
     fn daily_same_day_not_yet_reached() {
-        let ok = utc(2026, 11, 9, 1, 0, 0);
+        // (modifié : succès la veille à 03:00, la demi-période passée, le créneau du jour compte)
+        let ok = utc(2026, 11, 8, 3, 0, 0);
         let now = utc(2026, 11, 9, 1, 30, 0);
         assert_eq!(next_due(now, Some(ok), &DAILY), utc(2026, 11, 9, 2, 30, 0));
+        // Succès hier 02:31 -> aujourd'hui 02:30.
+        let ok = utc(2026, 11, 8, 2, 31, 0);
+        assert_eq!(next_due(now, Some(ok), &DAILY), utc(2026, 11, 9, 2, 30, 0));
+    }
+
+    #[test]
+    fn success_close_to_slot_does_not_run_twice_the_same_day() {
+        let now = utc(2026, 11, 9, 2, 20, 0);
+        // Succès à 02:20 (reprise après échec) : le lendemain, pas 02:30 le même jour.
+        assert_eq!(
+            next_due(now, Some(now), &DAILY),
+            utc(2026, 11, 10, 2, 30, 0)
+        );
+        // Premier lancement à 02:00:30.
+        let t = utc(2026, 11, 9, 2, 0, 30);
+        assert_eq!(next_due(t, Some(t), &DAILY), utc(2026, 11, 10, 2, 30, 0));
+        // Hebdomadaire : succès lundi 02:50 -> lundi suivant, pas 03:00 le même jour.
+        let t = utc(2026, 11, 9, 2, 50, 0);
+        assert_eq!(next_due(t, Some(t), &WEEKLY), utc(2026, 11, 16, 3, 0, 0));
+        assert_eq!(next_after_success(t, &WEEKLY), utc(2026, 11, 16, 3, 0, 0));
     }
 
     #[test]
@@ -363,11 +436,11 @@ mod tests {
         let ok = utc(2026, 11, 4, 10, 0, 0);
         let now = utc(2026, 11, 5, 10, 0, 0);
         assert_eq!(next_due(now, Some(ok), &WEEKLY), utc(2026, 11, 9, 3, 0, 0));
-        // Un lundi avant 03:00 : le créneau du jour.
+        // (modifié) Un lundi avant 03:00 avec succès récent : le lundi suivant (demi-période).
         let ok = utc(2026, 11, 9, 1, 0, 0);
         assert_eq!(
             next_due(utc(2026, 11, 9, 1, 5, 0), Some(ok), &WEEKLY),
-            utc(2026, 11, 9, 3, 0, 0)
+            utc(2026, 11, 16, 3, 0, 0)
         );
         // Un lundi après 03:00 : le lundi suivant.
         let ok = utc(2026, 11, 9, 3, 0, 1);
@@ -519,6 +592,9 @@ mod tests {
                     s.remove(0)
                 }
             };
+            if matches!(&next, Err(m) if m == "PANIC") {
+                panic!("secret-xyz dans le message de panique");
+            }
             next.map_err(CollectError::Fetch)
         }
     }
@@ -546,6 +622,7 @@ mod tests {
             r.clone(),
             clock.clone(),
             status.clone(),
+            SeedTimes::new(),
             jobs,
             every,
         ))
@@ -689,6 +766,7 @@ mod tests {
                 r.clone(),
                 clock.clone(),
                 status.clone(),
+                SeedTimes::new(),
                 false,
             ));
             pass(Duration::from_secs(10 * 24 * 3600)).await;
@@ -710,6 +788,7 @@ mod tests {
                 r.clone(),
                 clock.clone(),
                 status.clone(),
+                SeedTimes::new(),
                 true,
             ));
             pass(Duration::from_secs(60)).await;
@@ -720,6 +799,82 @@ mod tests {
             let rome = jobs.iter().position(|j| *j == Job::Rome).unwrap();
             let tech = jobs.iter().position(|j| *j == Job::Tech).unwrap();
             assert!(rome < tech);
+            h.abort();
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn panic_in_collector_is_isolated_recorded_and_retried_in_one_hour() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let status = StatusBoard::new();
+            // 1er appel (core, à +30 s) : panique ; ensuite succès.
+            let r = FakeRunner::with(&clock, vec![Err("PANIC".into())], Duration::ZERO);
+            let h = tokio::task::spawn_local(run_forever_with(
+                r.clone(),
+                clock.clone(),
+                status.clone(),
+                SeedTimes::new(),
+                true,
+            ));
+            pass(Duration::from_secs(31)).await;
+            let snap = status.snapshot();
+            let err = snap["core"].last_error.clone().unwrap();
+            assert_eq!(err, "récupération impossible : panique interne core");
+            assert!(!err.contains("secret-xyz"));
+            // L'autre boucle (France Travail) a bien tourné.
+            assert!(snap["rome"].last_ok.is_some() && snap["tech"].last_ok.is_some());
+            pass(Duration::from_secs(3590)).await;
+            let cores = |r: &FakeRunner| r.calls().into_iter().filter(|c| c.0 == Job::Core).count();
+            assert_eq!(cores(&r), 1);
+            pass(Duration::from_secs(10)).await;
+            let core_calls: Vec<_> = r.calls().into_iter().filter(|c| c.0 == Job::Core).collect();
+            assert_eq!(core_calls.len(), 2);
+            let gap = (core_calls[1].1 - core_calls[0].1).num_milliseconds();
+            assert!((3_600_000..=3_600_005).contains(&gap), "écart {gap} ms");
+            assert!(status.snapshot()["core"].last_ok.is_some());
+            h.abort();
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn seeded_time_is_used_for_scheduling_when_board_has_no_success() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let status = StatusBoard::new();
+            let r = FakeRunner::new(&clock);
+            // Fichier vieux de 5 jours : dû tout de suite ; la planche reste vide.
+            let mut seed = SeedTimes::new();
+            seed.insert("core".into(), start() - Span::days(5));
+            let h = tokio::task::spawn_local(job_loop(
+                r.clone(),
+                clock.clone(),
+                status.clone(),
+                seed,
+                vec![Job::Core],
+                DAILY,
+            ));
+            pass(Duration::from_millis(1)).await;
+            assert_eq!(r.calls().len(), 1);
+            assert_eq!(r.calls()[0].1, start());
+            h.abort();
+            // Fichier récent (il y a 1 h) : rien avant le créneau suivant (demain 02:30).
+            let clock = TokioClock::new(start());
+            let r = FakeRunner::new(&clock);
+            let mut seed = SeedTimes::new();
+            seed.insert("core".into(), start() - Span::hours(1));
+            let h = tokio::task::spawn_local(job_loop(
+                r.clone(),
+                clock.clone(),
+                StatusBoard::new(),
+                seed,
+                vec![Job::Core],
+                DAILY,
+            ));
+            pass(Duration::from_secs(10 * 3600)).await;
+            assert!(r.calls().is_empty());
             h.abort();
         })
         .await;

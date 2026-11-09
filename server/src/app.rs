@@ -4,10 +4,10 @@
 use crate::collect::ft::{FtClient, FtEndpoints, RateLimiter};
 use crate::config::{Config, FtCreds};
 use crate::http::{router, AppState};
-use crate::schedule::{run_forever, run_job, Ctx, Job, SystemWallClock};
+use crate::schedule::{run_forever, run_job, Ctx, Job, SeedTimes, SystemWallClock};
 use crate::status::StatusBoard;
 use crate::store::Store;
-use chrono::{DateTime, Duration as Span, Utc};
+use chrono::{DateTime, Utc};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -78,25 +78,41 @@ pub fn validate_bind(addr: SocketAddr) -> Result<SocketAddr, String> {
     }
 }
 
-/// Reprend la date des fichiers de données déjà présents comme dernier succès connu, pour qu'un
-/// redémarrage ne relance pas inutilement une collecte récente (et rattrape un vrai retard).
-pub fn seed_status_from_files(store: &Store, status: &StatusBoard, now: DateTime<Utc>) {
+/// Dates de dernière collecte supposées d'après la date de modification des fichiers de données,
+/// pour qu'un redémarrage ne relance pas inutilement une collecte récente et rattrape un vrai
+/// retard. La date de modification n'est fiable QUE pour la planification : elle ne passe jamais
+/// par le `StatusBoard` (un fichier copié ou restauré n'est pas une collecte réussie). Une date
+/// dans le futur est ramenée à `now` ; fichier ou dossier absent : pas de date (dû dans 30 s).
+pub fn seed_times_from_files(store: &Store, now: DateTime<Utc>) -> SeedTimes {
+    let mut seed = SeedTimes::new();
     for (job, file) in [
         (Job::Core, "data.js"),
         (Job::Rome, "rome.js"),
         (Job::Tech, "tech.js"),
     ] {
-        if let Some(age) = store.age_seconds(file) {
-            let age = i64::try_from(age).unwrap_or(0).min(100 * 365 * 86_400);
-            status.record_ok(job.name(), now - Span::seconds(age));
+        if let Some(modified) = store.modified(file) {
+            seed.insert(
+                job.name().to_string(),
+                DateTime::<Utc>::from(modified).min(now),
+            );
         }
     }
+    seed
 }
 
 pub fn init_tracing() {
+    // Journaux sur STDERR : la sortie standard de `once` ne contient que sa ligne de résultat.
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
+        .with_writer(std::io::stderr)
         .init();
+    // Le message d'une panique pourrait contenir des données : on n'en journalise que le lieu.
+    std::panic::set_hook(Box::new(|info| {
+        let place = info
+            .location()
+            .map_or_else(String::new, |l| format!("{}:{}", l.file(), l.line()));
+        tracing::error!(lieu = %place, "panique interne (message masqué)");
+    }));
 }
 
 fn build_ctx(cfg: Config) -> Result<Ctx, String> {
@@ -110,13 +126,14 @@ fn build_ctx(cfg: Config) -> Result<Ctx, String> {
     })?;
     let store = Store::new(cfg.data_dir.clone());
     let status = StatusBoard::new();
-    seed_status_from_files(&store, &status, Utc::now());
+    let seed = seed_times_from_files(&store, Utc::now());
     Ok(Ctx {
         http: clients.core,
         store,
         status,
         cfg,
         ft: clients.ft,
+        seed,
     })
 }
 
@@ -169,15 +186,24 @@ async fn serve_inner() -> Result<(), String> {
         .await
         .map_err(|e| format!("écoute impossible sur {bind} : {}", e.kind()))?;
     let server = axum::serve(listener, app).with_graceful_shutdown(async {
-        let _ = tokio::signal::ctrl_c().await;
+        // Si le gestionnaire de signal ne peut pas être installé, on n'arrête surtout pas le
+        // serveur : on attend indéfiniment.
+        if tokio::signal::ctrl_c().await.is_err() {
+            std::future::pending::<()>().await;
+        }
         tracing::info!("arrêt demandé (Ctrl-C)");
     });
     // Le planificateur tourne sur cette même tâche (son futur n'est pas `Send`, voir `Runner`) ;
-    // il ne se termine jamais, l'arrêt du serveur met donc fin aux deux.
+    // il ne se termine jamais, l'arrêt du serveur met donc fin aux deux. Abandonner le
+    // planificateur à l'arrêt est sans risque : `Store::save` est atomique (fichier temporaire
+    // puis renommage), une collecte interrompue laisse l'ancien fichier intact.
     let res = if scheduler {
         tokio::select! {
             r = server => r,
-            () = run_forever(ctx.clone()) => Ok(()),
+            () = run_forever(ctx.clone()) => {
+                tracing::error!("le planificateur s'est arrêté de façon inattendue");
+                return Err("planificateur arrêté de façon inattendue".into());
+            }
         }
     } else {
         server.await
@@ -274,16 +300,76 @@ mod tests {
         );
     }
 
+    fn set_mtime(dir: &std::path::Path, file: &str, t: std::time::SystemTime) {
+        let f = std::fs::File::create(dir.join(file)).unwrap();
+        f.set_modified(t).unwrap();
+    }
+
+    fn now_secs() -> DateTime<Utc> {
+        DateTime::from_timestamp(Utc::now().timestamp(), 0).unwrap()
+    }
+
     #[test]
-    fn seed_status_uses_file_ages() {
+    fn seed_uses_exact_file_mtime() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path());
-        store.save("data.js", &serde_json::json!({"a": 1})).unwrap();
+        let now = now_secs();
+        let five_days_ago = now - chrono::Duration::days(5);
+        set_mtime(dir.path(), "data.js", five_days_ago.into());
+        let seed = seed_times_from_files(&store, now);
+        assert_eq!(seed.get("core"), Some(&five_days_ago));
+        assert!(!seed.contains_key("rome") && !seed.contains_key("tech"));
+    }
+
+    #[test]
+    fn seed_ignores_missing_file_and_missing_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path());
+        assert!(seed_times_from_files(&store, Utc::now()).is_empty());
+        let store = Store::new(dir.path().join("nexiste-pas"));
+        assert!(seed_times_from_files(&store, Utc::now()).is_empty());
+    }
+
+    #[test]
+    fn seed_clamps_future_mtime_to_now() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path());
+        let now = now_secs();
+        set_mtime(
+            dir.path(),
+            "rome.js",
+            (now + chrono::Duration::hours(3)).into(),
+        );
+        let seed = seed_times_from_files(&store, now);
+        assert_eq!(seed.get("rome"), Some(&now));
+    }
+
+    #[test]
+    fn seeding_never_touches_the_status_board() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = now_secs();
+        for f in ["data.js", "rome.js", "tech.js"] {
+            set_mtime(dir.path(), f, now.into());
+        }
         let status = StatusBoard::new();
-        seed_status_from_files(&store, &status, Utc::now());
-        let snap = status.snapshot();
-        assert!(snap["core"].last_ok.is_some());
-        assert!(!snap.contains_key("rome") && !snap.contains_key("tech"));
+        let seed = seed_times_from_files(&Store::new(dir.path()), now);
+        assert_eq!(seed.len(), 3);
+        assert!(status.snapshot().values().all(|s| s.last_ok.is_none()));
+        assert!(status.snapshot().is_empty());
+    }
+
+    #[test]
+    fn five_day_old_seed_makes_job_due_immediately() {
+        use crate::schedule::{next_due, CORE_EVERY};
+        let dir = tempfile::tempdir().unwrap();
+        let now = now_secs();
+        set_mtime(
+            dir.path(),
+            "data.js",
+            (now - chrono::Duration::days(5)).into(),
+        );
+        let seed = seed_times_from_files(&Store::new(dir.path()), now);
+        assert_eq!(next_due(now, seed.get("core").copied(), &CORE_EVERY), now);
     }
 
     #[tokio::test]
