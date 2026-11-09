@@ -78,6 +78,9 @@ pub fn parse_offres(csv: &str) -> Result<Vec<(String, f64)>, ParseError> {
             out.push((dares_date(&r[i[0]])?, float(&r[i[5]], "nombre d'offres", &r[i[0]])?));
         }
     }
+    if out.is_empty() {
+        return Err(ParseError::Format("aucune ligne retenue pour les offres (filtres ou format modifiés ?)".into()));
+    }
     sort_points(&mut out);
     Ok(out)
 }
@@ -104,6 +107,9 @@ pub fn parse_dei(csv: &str) -> Result<Vec<(String, f64)>, ParseError> {
         {
             out.push((dares_date(&r[i[0]])?, float(&r[i[7]], "nombre de demandeurs", &r[i[0]])?));
         }
+    }
+    if out.is_empty() {
+        return Err(ParseError::Format("aucune ligne retenue pour les demandeurs d'emploi (filtres ou format modifiés ?)".into()));
     }
     sort_points(&mut out);
     Ok(out)
@@ -139,6 +145,9 @@ pub fn parse_vacants(csv: &str) -> Result<Value, ParseError> {
             None => sectors.push((code.to_string(), r[i[4]].to_string(), vec![point])),
         }
     }
+    if sectors.is_empty() {
+        return Err(ParseError::Format("aucun secteur retenu (filtres ou format modifiés ?)".into()));
+    }
     let mut out = Map::new();
     for (code, label, mut pts) in sectors {
         sort_points(&mut pts);
@@ -166,6 +175,7 @@ mod tests {
     #[test]
     fn dares_strips_double_bom() {
         assert!(VAC.starts_with("\u{feff}\u{feff}"), "la fixture doit garder le BOM doublé");
+        assert!(VAC.contains("\r\n"), "la fixture doit garder les fins de ligne CRLF");
         assert!(parse_vacants(VAC).is_ok());
         let triple = format!("\u{feff}{VAC}");
         assert_eq!(parse_vacants(&triple).unwrap(), parse_vacants(VAC).unwrap());
@@ -248,6 +258,30 @@ mod tests {
         assert!(matches!(parse_dei(&row("2019-01", "")), Err(ParseError::Format(_))));
         assert!(matches!(parse_dei(&row("2019-13", "5")), Err(ParseError::Format(_))));
         assert!(parse_dei(&row("2019-01", "5")).is_ok());
+    }
+
+    #[test]
+    fn dares_rejects_empty_retained_set() {
+        let header_of = |s: &str| format!("{}\n", s.lines().next().unwrap());
+        // en-tête seul
+        assert!(matches!(parse_offres(&header_of(OFFRES)), Err(ParseError::Format(_))));
+        assert!(matches!(parse_dei(&header_of(DEI)), Err(ParseError::Format(_))));
+        assert!(matches!(parse_vacants(&header_of(VAC)), Err(ParseError::Format(_))));
+        // lignes présentes mais toutes écartées (libellé amont renommé)
+        let renamed = OFFRES.replace("Total France métropolitaine", "France métropolitaine (total)");
+        assert!(matches!(parse_offres(&renamed), Err(ParseError::Format(_))));
+        let renamed = DEI.replace("France métropolitaine", "Métropole");
+        assert!(matches!(parse_dei(&renamed), Err(ParseError::Format(_))));
+        let renamed = VAC.replace("Plus de 10 salariés", "11 salariés et plus");
+        assert!(matches!(parse_vacants(&renamed), Err(ParseError::Format(_))));
+    }
+
+    #[test]
+    fn dares_rejects_truncated_row() {
+        let row = OFFRES.lines().nth(1).unwrap();
+        let cut = row.rsplit_once(';').unwrap().0;
+        let csv = format!("{}\n{cut}\n", OFFRES.lines().next().unwrap());
+        assert!(matches!(parse_offres(&csv), Err(ParseError::Format(_))));
     }
 
     #[test]

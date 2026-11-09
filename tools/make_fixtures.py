@@ -62,9 +62,12 @@ def eurostat_fixtures():
         write_bytes("eurostat", name + ".json", get_bytes(f"{ESTAT}{dataset}?{q}&sinceTimePeriod=2019-01"))
 
 
-def reduce_dares(raw, keep_rules):
+def reduce_dares(raw, keep_rules, derive=()):
     """Garde l'en-tête et, pour chaque règle (prédicat, premiers, derniers), les premières/dernières
-    lignes (ordre du fichier) qui la satisfont. Les lignes sont réécrites telles quelles (octets)."""
+    lignes (ordre du fichier) qui la satisfont. Les lignes sont réécrites telles quelles (octets).
+    `derive` : (prédicat, {colonne: valeur}) -> ajoute en fin de fichier la 1re ligne réelle satisfaisant
+    le prédicat avec ces colonnes remplacées (cas que le jeu réel ne contient pas, ex. une qualification
+    autre que « Total » ou une offre « satisfaite » après 2013)."""
     eol = b"\r\n" if b"\r\n" in raw[:2000] else b"\n"
     lines = raw.split(eol)
     if lines and lines[-1] == b"":
@@ -85,7 +88,16 @@ def reduce_dares(raw, keep_rules):
         chosen.update(hits[:nfirst])
         if nlast:
             chosen.update(hits[-nlast:])
-    return eol.join([head] + [lines[i] for i in sorted(chosen)]) + eol
+    extra = []
+    for pred, changes in derive:
+        hits = [i for i, r in recs if pred(r)]
+        if not hits:
+            raise SystemExit("aucune ligne à dériver : fichier réel inattendu")
+        cells = lines[hits[0]].decode("utf-8").split(";")
+        for col, val in changes.items():
+            cells[names.index(col)] = val
+        extra.append(";".join(cells).encode("utf-8"))
+    return eol.join([head] + [lines[i] for i in sorted(chosen)] + extra) + eol
 
 
 def dares_fixtures():
@@ -118,17 +130,31 @@ def dares_fixtures():
          and r["Tranche d'âge"] == "Total" and r["Date"] == "2019-01", 1, 0),
         (lambda r: r["Champ"] == "France métropolitaine" and r["Catégorie"] == "A" and r["Sexe"] == "Total"
          and r["Tranche d'âge"] == "Moins de 25 ans" and r["Date"] == "2019-01", 1, 0),
-        (lambda r: r["Champ"] == "France" and r["Catégorie"] == "A" and dei_base(r) and r["Date"] == "2019-01", 1, 0),
-    ]
+        (lambda r: r["Champ"] == "France" and r["Catégorie"] == "A" and dei_base(r) and r["Date"] == "2019-01", 1, 0),    ]
     quarters = {"2018-T4", "2019-T1", "2019-T2", "2020-T1", "2026-T2"}  # 2020-T1 contient des taux vides
     rules["vacants"] = [
         (lambda r: r["Nomenclature"] == "A10" and r["Champ"] == "Plus de 10 salariés" and r["Date"] in quarters, 999, 0),
         (lambda r: r["Nomenclature"] == "A4" and r["Champ"] == "Plus de 10 salariés" and r["Date"] == "2019-T1", 1, 0),
         (lambda r: r["Nomenclature"] == "A10" and r["Champ"] == "Ensemble" and r["Date"] == "2019-T1", 1, 0),
     ]
+    # Lignes dérivées d'une vraie ligne retenue (2019-02), un seul critère changé : le jeu réel n'a
+    # aucune qualification autre que « Total » ni offre « satisfaite » postérieure à 2013.
+    kept_offre = lambda r: offres_ok(r) and r["Date"] == "2019-02"
+    derive = {
+        "offres": [
+            (kept_offre, {"Qualification": "Cadres"}),
+            (kept_offre, {"Type d'offre d'emploi": "Offres d'emploi satisfaites"}),
+        ],
+    }
+    kept_dei = lambda r: (r["Champ"] == "France métropolitaine" and r["Catégorie"] == "A"
+                          and dei_base(r) and r["Date"] == "2019-02")
+    derive["dei"] = [  # en catégorie A le jeu réel n'a que des lignes « Total » pour ces deux colonnes
+        (kept_dei, {"Tranche d'heures travaillées": "Moins de 20h"}),
+        (kept_dei, {"Ancienneté": "Moins d'un an"}),
+    ]
     for key, dataset in DARES_SETS.items():
         raw = get_bytes(f"{DARES}{dataset}/exports/csv?use_labels=true")
-        write_bytes("dares", key + ".csv", reduce_dares(raw, rules[key]))
+        write_bytes("dares", key + ".csv", reduce_dares(raw, rules[key], derive.get(key, ())))
 
 
 def main():

@@ -21,7 +21,8 @@ fn try_period_to_date(p: &str) -> Option<String> {
 }
 
 /// Comme `try_period_to_date`, mais renvoie l'étiquette telle quelle si elle est inconnue
-/// (l'analyseur, lui, rejette ces étiquettes : voir `parse_jsonstat`).
+/// (l'analyseur, lui, rejette ces étiquettes : voir `parse_jsonstat`). Réservé aux tests.
+#[cfg(test)]
 pub fn period_to_date(p: &str) -> String {
     try_period_to_date(p).unwrap_or_else(|| p.to_string())
 }
@@ -87,6 +88,9 @@ pub fn parse_jsonstat(json: &str) -> Result<Vec<(String, f64)>, ParseError> {
         let date = try_period_to_date(&label)
             .ok_or_else(|| ParseError::Format(format!("période inconnue : {label}")))?;
         out.push((date, v));
+    }
+    if out.is_empty() {
+        return Err(ParseError::Format("aucune valeur dans la réponse JSON-stat".into()));
     }
     Ok(out)
 }
@@ -165,6 +169,16 @@ mod tests {
         assert!(matches!(parse_jsonstat("<html>502</html>"), Err(ParseError::Format(_))));
         assert!(matches!(parse_jsonstat(""), Err(ParseError::Format(_))));
         assert!(matches!(parse_jsonstat("{}"), Err(ParseError::Format(_))));
+    }
+
+    #[test]
+    fn jsonstat_rejects_series_without_values() {
+        let none = r#"{"dimension":{"time":{"category":{"index":{"2020-01":0,"2020-02":1}}}},"value":{}}"#;
+        assert!(matches!(parse_jsonstat(none), Err(ParseError::Format(_))));
+        let nulls = r#"{"dimension":{"time":{"category":{"index":{"2020-01":0}}}},"value":[null]}"#;
+        assert!(matches!(parse_jsonstat(nulls), Err(ParseError::Format(_))));
+        let empty_idx = r#"{"dimension":{"time":{"category":{"index":{}}}},"value":{}}"#;
+        assert!(matches!(parse_jsonstat(empty_idx), Err(ParseError::Format(_))));
     }
 
     #[test]
