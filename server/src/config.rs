@@ -30,6 +30,9 @@ pub struct Config {
     pub bind: SocketAddr,
     pub data_dir: PathBuf,
     pub ft: Option<FtCreds>,
+    /// `false` si `VE_DISABLE_SCHEDULER` vaut `1` ou `true` : le serveur sert les fichiers mais ne
+    /// lance aucune collecte automatique (tests de fumée, exploitation en lecture seule).
+    pub scheduler_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -62,35 +65,62 @@ impl Config {
             (None, Some(_)) => return Err(ConfigError::MissingFtId),
         };
 
-        Ok(Config { bind, data_dir, ft })
+        let scheduler_enabled = !matches!(
+            get("VE_DISABLE_SCHEDULER").map(str::to_ascii_lowercase).as_deref(),
+            Some("1" | "true")
+        );
+
+        Ok(Config {
+            bind,
+            data_dir,
+            ft,
+            scheduler_enabled,
+        })
     }
 
     /// Variables d'environnement, complétées par `.env` (l'environnement prime).
     pub fn from_env() -> Result<Config, ConfigError> {
         let mut vars = load_dotenv(Path::new(".env"));
-        vars.extend(std::env::vars());
+        vars.extend(env_map(std::env::vars_os()));
         Config::from_map(&vars)
     }
 }
 
-/// Lit un fichier `KEY=VALUE` ; ignore commentaires et lignes vides.
+/// Variables d'environnement sous forme de table. Les entrées dont le nom ou la valeur n'est pas
+/// de l'Unicode valide sont ignorées (`std::env::vars()` paniquerait).
+pub(crate) fn env_map(
+    entries: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> HashMap<String, String> {
+    entries
+        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
+        .collect()
+}
+
+/// Lit un fichier `KEY=VALUE` (BOM UTF-8 et préfixe `export ` acceptés) ; ignore commentaires,
+/// lignes vides et lignes sans nom de variable.
 /// Un fichier absent ou illisible donne une table vide.
 pub fn load_dotenv(path: &Path) -> HashMap<String, String> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return HashMap::new();
     };
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     text.lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .filter_map(|l| l.split_once('='))
-        .map(|(k, v)| {
+        .filter_map(|(k, v)| {
+            let k = k.trim();
+            let k = k.strip_prefix("export ").map_or(k, str::trim_start);
+            if k.is_empty() || k == "export" {
+                return None;
+            }
             let v = v.trim();
             let v = v
                 .strip_prefix('"')
                 .and_then(|s| s.strip_suffix('"'))
                 .or_else(|| v.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
                 .unwrap_or(v);
-            (k.trim().to_string(), v.to_string())
+            Some((k.to_string(), v.to_string()))
         })
         .collect()
 }
@@ -185,5 +215,62 @@ mod tests {
         let m = load_dotenv(&p);
         assert_eq!(m, map(&[("A", "1"), ("B", "2")]));
         assert!(load_dotenv(&dir.path().join("absent")).is_empty());
+    }
+
+    #[test]
+    fn dotenv_strips_bom_so_first_key_is_readable() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join(".env");
+        std::fs::write(&p, "\u{feff}FIRST=1\nSECOND=2\n").unwrap();
+        assert_eq!(load_dotenv(&p), map(&[("FIRST", "1"), ("SECOND", "2")]));
+    }
+
+    #[test]
+    fn dotenv_accepts_export_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join(".env");
+        std::fs::write(&p, "export A=1\nexport   B = \"x y\"\n").unwrap();
+        assert_eq!(load_dotenv(&p), map(&[("A", "1"), ("B", "x y")]));
+    }
+
+    #[test]
+    fn dotenv_skips_lines_with_empty_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join(".env");
+        std::fs::write(&p, "=x\n  =y\nexport =z\nOK=1\n").unwrap();
+        assert_eq!(load_dotenv(&p), map(&[("OK", "1")]));
+    }
+
+    #[test]
+    fn env_map_ignores_non_unicode_entries_without_panicking() {
+        use std::ffi::OsString;
+        #[cfg(unix)]
+        let bad: OsString = {
+            use std::os::unix::ffi::OsStringExt;
+            OsString::from_vec(vec![0x66, 0x80, 0x6f])
+        };
+        #[cfg(windows)]
+        let bad: OsString = {
+            use std::os::windows::ffi::OsStringExt;
+            OsString::from_wide(&[0x66, 0xD800, 0x6f])
+        };
+        assert!(bad.to_str().is_none());
+        let entries = vec![
+            (OsString::from("GOOD"), OsString::from("1")),
+            (OsString::from("BADVAL"), bad.clone()),
+            (bad, OsString::from("v")),
+        ];
+        assert_eq!(env_map(entries.into_iter()), map(&[("GOOD", "1")]));
+    }
+
+    #[test]
+    fn scheduler_can_be_disabled_by_variable() {
+        assert!(Config::from_map(&HashMap::new()).unwrap().scheduler_enabled);
+        for v in ["1", "true"] {
+            let cfg = Config::from_map(&map(&[("VE_DISABLE_SCHEDULER", v)])).unwrap();
+            assert!(!cfg.scheduler_enabled, "{v}");
+        }
+        let cfg = Config::from_map(&map(&[("VE_DISABLE_SCHEDULER", "0")])).unwrap();
+        assert!(cfg.scheduler_enabled);
     }
 }
