@@ -5,10 +5,14 @@
 // Retourne {combos, nbErreurs, nbListesVides, nbDebordements, echecs}.
 (async function () {
   var erreurs = [];
-  window.addEventListener("error", function (e) { erreurs.push(String(e.message)); });
-  window.addEventListener("unhandledrejection", function (e) { erreurs.push("promesse : " + String(e.reason)); });
+  var onErr = function (e) { erreurs.push(String(e.message)); };
+  var onRej = function (e) { erreurs.push("promesse : " + String(e.reason)); };
+  var onCsp = function (e) { erreurs.push("CSP : " + e.violatedDirective + " " + e.blockedURI); };
+  window.addEventListener("error", onErr);
+  window.addEventListener("unhandledrejection", onRej);
+  document.addEventListener("securitypolicyviolation", onCsp);
   var pause = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
-  var res = { combos: 0, nbErreurs: 0, nbListesVides: 0, nbDebordements: 0, echecs: [] };
+  var res = { combos: 0, nbErreurs: 0, nbListesVides: 0, nbDebordements: 0, nbIntrouvables: 0, echecs: [] };
 
   // Les boutons sont reconstruits à chaque rendu : on relit toujours le DOM.
   function visible(el) { return !!el && el.offsetParent !== null; }
@@ -20,7 +24,7 @@
   async function presser(sel, texte) {
     var c = document.querySelector(sel);
     var b = c && Array.prototype.filter.call(c.querySelectorAll("button"), function (x) { return x.textContent === texte; })[0];
-    if (!b) return false;
+    if (!b) { res.nbIntrouvables++; if (res.echecs.length < 10) res.echecs.push("bouton introuvable : " + sel + " > " + texte); return false; }
     b.click();
     await pause(60);
     return true;
@@ -35,6 +39,8 @@
     if (!ok && res.echecs.length < 10) res.echecs.push(chemin.join(" > "));
   }
 
+  try {
+  if (typeof window.DATA === "undefined") res.echecs.push("window.DATA absent : page non chargée ou application plantée");
   var themes = textes("#groups");
   for (var i = 0; i < themes.length; i++) {
     await presser("#groups", themes[i]);
@@ -55,6 +61,13 @@
         }
       }
     }
+  }
+  if (res.combos === 0) res.echecs.push("aucun combo exécuté");
+  if (erreurs.length) { res.nbErreurs += erreurs.length; erreurs = []; }
+  } finally {
+    window.removeEventListener("error", onErr);
+    window.removeEventListener("unhandledrejection", onRej);
+    document.removeEventListener("securitypolicyviolation", onCsp);
   }
   return res;
 })();
