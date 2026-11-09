@@ -14,3 +14,6 @@ data/tech.js
 __pycache__/
 *.pyc
 *.stackdump
+
+# Espace de travail des agents (journal, briefs, rapports)
+.superpowers/
