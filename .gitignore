@@ -1,0 +1,16 @@
+# Secrets : ne jamais versionner ni publier
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Données issues de l'API France Travail : conditions de redistribution de francetravail.io
+# non vérifiées. À régénérer avec fetch_rome.py et fetch_tech.py (voir README.md).
+data/rome.js
+data/tech.js
+
+# Fichiers parasites
+__pycache__/
+*.pyc
+*.stackdump
