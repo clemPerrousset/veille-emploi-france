@@ -83,6 +83,10 @@ Pour corriger un score, modifie le fichier à la main. Une vérification plus so
 | `data/*.js` | données chargées par `index.html` (valeurs assignées à `window.*`, pour fonctionner sans serveur) |
 | `.env` | identifiants France Travail (secret, ignoré par git) |
 
+## Licence
+
+Le code de ce dépôt est publié sous licence **MIT** (voir `LICENSE`). Cette licence couvre le code et les estimations d'exposition à l'IA, **pas les données des sources tierces**, qui gardent leurs propres licences (voir « Sources et licences » : Indeed Hiring Lab en CC BY 4.0, DARES en Licence Ouverte, Eurostat, API France Travail). `vendor/chart.umd.min.js` est Chart.js, sous licence MIT également (© Chart.js Contributors).
+
 ## Projet : portage futur
 
 Cette version est un prototype local. Un portage en Rust, hébergé sur `https://ecostat21.applicationrush.fr`, est prévu plus tard. Les scripts de collecte sont séparés de l'interface et les données ont des formats simples pour faciliter ce portage. En hébergement, le secret France Travail devra être une variable d'environnement du serveur (jamais un fichier public), et la collecte devra tourner côté serveur.
