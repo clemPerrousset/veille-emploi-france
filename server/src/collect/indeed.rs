@@ -129,12 +129,39 @@ mod tests {
 
     #[test]
     fn sectors_keep_first_seen_order() {
-        let v = parse_sectors(SEC).unwrap();
-        let names: Vec<&String> = v["series"].as_object().unwrap().keys().collect();
-        let gold = json(SEC_GOLD);
-        let gold_names: Vec<&String> = gold["series"].as_object().unwrap().keys().collect();
-        assert_eq!(names, gold_names);
-        assert!(names.iter().any(|n| n.contains(',')));
+        let csv = "date,jobcountry,indeed_job_postings_index,variable,display_name\n\
+2020-02-01,FR,1,total postings,Zeta\n\
+2020-02-02,FR,2,total postings,Zeta\n\
+2020-02-01,FR,3,total postings,Alpha\n\
+2020-02-02,FR,4,total postings,Alpha\n\
+2020-02-01,FR,5,total postings,\"B, C\"\n\
+2020-02-02,FR,6,total postings,\"B, C\"\n";
+        let v = parse_sectors(csv).unwrap();
+        let keys: Vec<&str> = v["series"].as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(keys, ["Zeta", "Alpha", "B, C"]);
+        let top: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(top, ["dates", "series"]);
+    }
+
+    #[test]
+    fn aggregate_keeps_python_key_order() {
+        let v = parse_aggregate(AGG).unwrap();
+        let top: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(top, ["total postings", "new postings"]);
+        for k in top {
+            let inner: Vec<&str> = v[k].as_object().unwrap().keys().map(String::as_str).collect();
+            assert_eq!(inner, ["dates", "values"]);
+        }
+    }
+
+    #[test]
+    fn bom_and_crlf_give_same_output() {
+        let bom = format!("\u{feff}{AGG}");
+        assert_eq!(parse_aggregate(&bom).unwrap(), parse_aggregate(AGG).unwrap());
+        let crlf = AGG.replace('\n', "\r\n");
+        assert_eq!(parse_aggregate(&crlf).unwrap(), parse_aggregate(AGG).unwrap());
+        let crlf = SEC.replace('\n', "\r\n");
+        assert_eq!(parse_sectors(&crlf).unwrap(), parse_sectors(SEC).unwrap());
     }
 
     #[test]
