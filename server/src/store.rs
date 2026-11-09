@@ -83,6 +83,15 @@ impl Store {
         }
         std::fs::read(self.dir.join(file))
     }
+
+    /// Âge du fichier de données en secondes (date de modification), `None` s'il est absent.
+    pub fn age_seconds(&self, file: &str) -> Option<u64> {
+        if !Self::is_known(file) {
+            return None;
+        }
+        let modified = std::fs::metadata(self.dir.join(file)).ok()?.modified().ok()?;
+        Some(modified.elapsed().map(|d| d.as_secs()).unwrap_or(0))
+    }
 }
 
 #[cfg(test)]
