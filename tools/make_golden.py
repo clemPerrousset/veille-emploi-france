@@ -59,3 +59,20 @@ dares = fd.dares_series()
 dump("dares_offres.json", dares["ft_offres"]["points"])
 dump("dares_dei.json", dares["ft_dei"]["points"])
 dump("dares_vacants.json", fd.vacants())
+
+
+class FixedDate:  # remplace datetime.date dans le prototype : date.today() figée
+    @staticmethod
+    def today():
+        import datetime
+        return datetime.date(2026, 11, 9)
+
+
+fd.date = FixedDate  # la charge utile de data.js est assemblée comme dans fetch_data.py (__main__)
+dump("data.json", {
+    "aggregate": fd.indeed_aggregate(),
+    "sectors": fd.indeed_sectors(),
+    "macro": {**fd.macro(), **fd.dares_series()},
+    "vacants": fd.vacants(),
+    "updated": fd.date.today().isoformat(),
+})
