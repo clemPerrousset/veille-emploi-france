@@ -29,7 +29,7 @@ FT_CLIENT_ID=PAR_...
 FT_CLIENT_SECRET=...
 ```
 
-`.gitignore` exclut ce fichier. Ne le partage pas et ne le mets pas sur un serveur public. Si le secret a été exposé, régénère-le sur francetravail.io (« Renouveler ») et remplace la ligne.
+`.gitignore` exclut ce fichier. Ne le partage pas et ne le mets pas dans un dossier servi publiquement (sur un serveur, le secret va dans un fichier d'environnement protégé : voir « Version Rust »). Si le secret a été exposé, régénère-le sur francetravail.io (« Renouveler ») et remplace la ligne.
 
 ## Les thèmes et les vues
 
@@ -75,18 +75,51 @@ Pour corriger un score, modifie le fichier à la main. Une vérification plus so
 
 | Fichier | Rôle |
 |---|---|
-| `index.html` | l'application (HTML, CSS et JavaScript) |
+| `index.html`, `app.js`, `style.css` | l'application (page, JavaScript, styles) |
 | `vendor/chart.umd.min.js` | Chart.js 4.4.1 (MIT), pour les graphiques |
 | `fetch_data.py` | collecte Indeed, Eurostat, DARES, écrit `data/data.js` |
 | `fetch_rome.py` | collecte les offres des 1 900 métiers ROME, écrit `data/rome.js` |
 | `fetch_tech.py` | collecte demandeurs, embauches, tension (18 métiers tech), écrit `data/tech.js`. La liste des codes est modifiable en tête du fichier |
 | `data/*.js` | données chargées par `index.html` (valeurs assignées à `window.*`, pour fonctionner sans serveur) |
+| `server/` | version Rust : serveur web et collecteurs (voir « Version Rust ») |
+| `docs/deploy/DEPLOIEMENT.md` | guide de déploiement HTTPS sur le serveur |
 | `.env` | identifiants France Travail (secret, ignoré par git) |
 
 ## Licence
 
 Le code de ce dépôt est publié sous licence **MIT** (voir `LICENSE`). Cette licence couvre le code et les estimations d'exposition à l'IA, **pas les données des sources tierces**, qui gardent leurs propres licences (voir « Sources et licences » : Indeed Hiring Lab en CC BY 4.0, DARES en Licence Ouverte, Eurostat, API France Travail). `vendor/chart.umd.min.js` est Chart.js, sous licence MIT également (© Chart.js Contributors).
 
-## Projet : portage futur
+## Version Rust
 
-Cette version est un prototype local. Un portage en Rust, hébergé sur `https://ecostat21.applicationrush.fr`, est prévu plus tard. Les scripts de collecte sont séparés de l'interface et les données ont des formats simples pour faciliter ce portage. En hébergement, le secret France Travail devra être une variable d'environnement du serveur (jamais un fichier public), et la collecte devra tourner côté serveur.
+Le dossier `server/` contient un portage en Rust (branche `rust-port`) : **un seul programme** qui sert l'interface (fichiers incorporés au binaire à la compilation), publie les fichiers de données et collecte lui-même les sources à heure fixe, à la place des scripts Python. Il est prévu pour être hébergé sur `https://ecostat21.applicationrush.fr` derrière nginx. La version Python et l'ouverture directe de `index.html` continuent de fonctionner.
+
+Il faut Rust 1.88 ou plus récent. Pour compiler, le dépôt doit être cloné en entier (l'interface est lue à la racine).
+
+```bash
+cd server && cargo test
+```
+
+```bash
+cd server && VE_DATA_DIR=../data cargo run --release -- serve
+```
+
+Le site est alors servi sur `http://127.0.0.1:3210`. `/health` renvoie l'état des collectes et l'âge des fichiers. Pour lancer une collecte à la main (une ligne de résultat sur la sortie standard, les journaux sur la sortie d'erreur, code de sortie 0 ou 1) :
+
+```bash
+cd server && VE_DATA_DIR=../data cargo run --release -- once core
+```
+
+Les tâches possibles sont `core` (Indeed, Eurostat, DARES), `rome` et `tech` (France Travail, clé requise). Les collectes tournent aussi seules : `core` chaque jour à 02:30 UTC, France Travail le lundi à 03:00 UTC.
+
+| Variable | Rôle | Défaut |
+|---|---|---|
+| `VE_BIND` | adresse d'écoute ; le programme **refuse** toute adresse non locale | `127.0.0.1:3210` |
+| `VE_DATA_DIR` | dossier des fichiers de données (`data.js`, `rome.js`, `tech.js`, `ai_exposure.js`, `ai_rome.js`) | `./data` |
+| `FT_CLIENT_ID`, `FT_CLIENT_SECRET` | identifiants France Travail ; sans eux, les collectes `rome` et `tech` sont désactivées (`core` fonctionne) | aucune |
+| `VE_DISABLE_SCHEDULER` | `1` ou `true` : désactive les collectes planifiées (**tests uniquement**) | désactivé |
+
+Un fichier `.env` du dossier courant est lu au démarrage (l'environnement du processus a priorité) ; en production, on utilise à la place un fichier d'environnement systemd. `ai_exposure.js` et `ai_rome.js` sont créés au premier démarrage à partir de valeurs par défaut incorporées, sans jamais écraser un fichier existant.
+
+**Mise en ligne** : suivez [`docs/deploy/DEPLOIEMENT.md`](docs/deploy/DEPLOIEMENT.md) (compilation sur le serveur, service systemd, nginx, HTTPS avec Let's Encrypt, exploitation).
+
+**Statut** : les scripts Python (`fetch_*.py`) restent la **référence** tant que l'équivalence de la version Rust n'est pas acceptée. Pour `data.js`, la sortie du programme Rust a été vérifiée identique octet pour octet à celle de `fetch_data.py`.
