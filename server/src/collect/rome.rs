@@ -100,7 +100,8 @@ async fn fetch_activities<C: StatApi>(client: &C) -> Result<Vec<(String, String)
 }
 
 /// Récupère la liste ROME puis les offres de chaque métier (`workers` appels simultanés au plus).
-/// Un métier en échec est ignoré ; si aucun métier ne fournit de donnée, rien n'est écrit.
+/// Un métier en échec est ignoré, mais si plus de 10 % des métiers échouent la collecte est
+/// refusée (erreur, ancien fichier conservé) ; si aucun métier ne fournit de donnée, rien n'est écrit.
 pub async fn run<C: StatApi>(
     client: &C,
     store: &Store,

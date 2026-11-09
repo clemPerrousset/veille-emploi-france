@@ -216,7 +216,7 @@ mod tests {
     fn is_known_is_exact_match() {
         let d = tempfile::tempdir().unwrap();
         let s = Store::new(d.path());
-        for bad in ["../rome.js", "sub/rome.js", "rome.js/", "rome.json", "ROME.JS", "", "..\rome.js"] {
+        for bad in ["../rome.js", "sub/rome.js", "rome.js/", "rome.json", "ROME.JS", "", r"..\rome.js"] {
             assert!(!Store::is_known(bad), "{bad:?}");
             assert!(s.read(bad).is_err(), "{bad:?}");
             assert!(s.save(bad, &json!({})).is_err(), "{bad:?}");

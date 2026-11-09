@@ -571,10 +571,11 @@
   $("#custom").max = new Date(LAST - 7 * DAY).toISOString().slice(0, 10);
   $("#custom").value = state.custom;
   $("#custom").addEventListener("change", function (e) { state.custom = e.target.value; buildControls(); render(); });
-  $("#updated").textContent = "Données Indeed jusqu'au " + dateFr(LAST, true) + ". Collecte du " + dateFr(ms(D.updated), true) + " (relancer fetch_data.py pour actualiser).";
+  $("#updated").textContent = "Données Indeed jusqu'au " + dateFr(LAST, true) + ". Collecte du " + dateFr(ms(D.updated), true) + ".";
   try {
     var collectes = " Dernières collectes : Indeed/Eurostat/DARES " + dateFr(ms(D.updated), true);
-    if (window.ROME && window.ROME.updated) collectes += ", France Travail " + dateFr(ms(window.ROME.updated), true);
+    if (window.ROME && window.ROME.updated) collectes += ", France Travail (métiers) " + dateFr(ms(window.ROME.updated), true);
+    if (window.TECH && window.TECH.updated) collectes += ", France Travail (tech) " + dateFr(ms(window.TECH.updated), true);
     $("#updated").textContent += collectes + ".";
   } catch (e) { /* ROME absent ou date illisible : on garde le texte de base */ }
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);

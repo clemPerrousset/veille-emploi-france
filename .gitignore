@@ -5,8 +5,8 @@
 *.pem
 *.key
 
-# Données issues de l'API France Travail : conditions de redistribution de francetravail.io
-# non vérifiées. À régénérer avec fetch_rome.py et fetch_tech.py (voir README.md).
+# Données issues de l'API France Travail (Licence Ouverte Etalab, conditions vérifiées) :
+# générées par le serveur (ou fetch_rome.py / fetch_tech.py), donc non versionnées. Voir README.md.
 data/rome.js
 data/tech.js
 

@@ -29,9 +29,9 @@ Pourquoi : l'outil sert à garder « une vision très claire » de ce qui se pas
 
 ## 3. Contraintes
 
-- **Serveur** : Ubuntu 22.04, ~20 Go de disque dont environ 9 Go libres, mémoire peu utilisée. Le serveur web est **nginx** (reverse proxy, HTTPS sur 443). Les autres applications tournent comme **services `systemd`** ; **Docker**, PostgreSQL et Redis sont aussi présents mais ne servent pas ici. La chaîne Rust (`cargo`, `rustc`) est installée pour l'utilisateur `ubuntu`. Plusieurs ports locaux sont déjà utilisés : le port du nouveau service (3210 par défaut) sera vérifié libre au déploiement.
+- **Serveur** : un serveur Linux avec **nginx** comme reverse proxy (HTTPS sur 443) et des services **`systemd`**. L'espace disque est limité (voir la vérification avant compilation, section 7) et le port du nouveau service (3210 par défaut) sera vérifié libre au déploiement.
 - **DNS** : l'enregistrement `ecostat21` (type A) pointe déjà vers le serveur.
-- **API France Travail** : application « Ecostat21 », API « Marché du travail v1 » autorisée, limite de **10 appels/seconde** ; droits `api_stats-offres-demandes-emploiv1 offresetdemandesemploi`. Le jeton dure environ 25 minutes. L'identifiant et le secret viennent de variables d'environnement.
+- **API France Travail** : API « Marché du travail v1 », limite de **10 appels/seconde**, avec les droits (scopes) documentés par l'API (`api_stats-offres-demandes-emploiv1 offresetdemandesemploi`). Le jeton dure environ 25 minutes. L'identifiant et le secret viennent de variables d'environnement.
 - **Licences** : Indeed Hiring Lab (CC BY 4.0, citer), DARES (Licence Ouverte), Eurostat (mention). **API France Travail « Marché du travail » : accès libre sous licence Etalab (Licence Ouverte)**, vérifié le 2026-11-09 sur la page de l'API et dans les CGU de francetravail.io (article 5.2 a) : reproduction, modification et usage commercial autorisés, avec mention de la source (voir section 8). L'API « Offres d'emploi », elle, relève d'une autre licence et est actuellement suspendue : **on ne l'utilise pas**.
 - L'auteur garde **la même clé API** qu'aujourd'hui, y compris en production (décision explicite, ne pas la remettre en cause).
 
@@ -44,11 +44,11 @@ Pourquoi : l'outil sert à garder « une vision très claire » de ce qui se pas
 
 ## 5. Architecture proposée (choix du concepteur, à contester)
 
-**Un crate Rust, un binaire**, `veille-emploi`, avec :
+**Un crate Rust, un binaire**, `veille_emploi`, avec :
 
 - **Serveur HTTP (`axum`, `tokio`)** : sert `index.html`, `vendor/chart.umd.min.js` et les fichiers de données. Les ressources statiques de l'interface sont **embarquées dans le binaire** (pas de dossier à synchroniser). Les fichiers de données sont lus depuis un répertoire configurable (`DATA_DIR`) pour pouvoir être mis à jour sans redéployer.
 - **Routes** : `GET /` (page), `GET /data/<nom>.js` (les 5 fichiers de données actuels, mêmes noms et même format), `GET /health` (JSON : date de dernière réussite de chaque collecte, âge des données, version). Aucune route d'écriture.
-- **Collecteurs** (portage des trois scripts Python) : `indeed`, `eurostat`, `dares`, `france_travail` (offres ROME puis indicateurs tech). Un module de planification dans le binaire lance chaque collecteur à son rythme ; une option `--once <collecteur>` permet de les lancer à la main (tests et dépannage).
+- **Collecteurs** (portage des trois scripts Python) : `indeed`, `eurostat`, `dares`, `france_travail` (offres ROME puis indicateurs tech). Un module de planification dans le binaire lance chaque collecteur à son rythme ; la sous-commande `veille_emploi once <core|rome|tech>` permet de les lancer à la main (tests et dépannage).
 - **Écriture atomique** : chaque fichier est écrit sous un nom temporaire puis renommé. Si une collecte échoue, **le dernier fichier valide reste servi** et l'échec est visible dans `/health` et les logs.
 - **Rythmes** : Indeed, Eurostat, DARES une fois par jour (la nuit). France Travail : une vérification hebdomadaire, avec rafraîchissement complet (environ 1 900 appels, quelques minutes à faible concurrence, bien sous 10 appels/s) quand la source a publié un nouveau trimestre ou au plus une fois par semaine.
 - **Fichiers fournis avec l'application** (non collectés) : `ai_exposure.js` et `ai_rome.js` (estimations d'exposition à l'IA, modifiables à la main).
@@ -76,7 +76,6 @@ Pourquoi : l'outil sert à garder « une vision très claire » de ce qui se pas
 - **Réutilisation des données de l'API France Travail : réglée.** L'API « Marché du travail » est en accès libre sous licence Etalab : le site peut les afficher publiquement. Obligations à respecter : **mentionner la source** (« France Travail, API Marché du travail, Licence Ouverte Etalab ») **et la date de mise à jour** des données sur le site, ne pas laisser croire à un soutien officiel. Les CGU évoquent aussi le maintien ouvert des bases redistribuées : les données traitées servies par le site restent donc librement accessibles (elles le sont déjà via les fichiers `/data/*.js`). Revérifier si France Travail modifie ses CGU.
 - Le pied de page du site doit afficher la date de dernière collecte de chaque source (disponible dans `/health`).
 - Attribution des sources : l'écran « Sources, limites et licences » existe déjà ; il doit rester accessible et à jour.
-- Le serveur indique « redémarrage système requis » : pas bloquant, mais un redémarrage coupera brièvement les services (le nôtre reprendra seul).
 
 ## 9. Tests
 

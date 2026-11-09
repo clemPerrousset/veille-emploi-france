@@ -49,7 +49,7 @@ Un interrupteur « Niveau de détail » bascule entre les **catégories Indeed**
 | Offres d'emploi, 34 catégories | [Indeed Hiring Lab](https://github.com/hiring-lab/job_postings_tracker) | CC BY 4.0 (citer la source) |
 | Chômage, PIB, exportations, importations | Eurostat | Réutilisation libre avec mention |
 | Offres collectées, demandeurs (cat. A), emplois vacants par secteur | [DARES, open data](https://data.dares.travail-emploi.gouv.fr) | Licence Ouverte |
-| Offres, demandeurs, embauches, tension par métier ROME | API « Marché du travail » de France Travail | Compte et conditions d'usage de francetravail.io |
+| Offres, demandeurs, embauches, tension par métier ROME | API « Marché du travail » de France Travail | Licence Ouverte (Etalab), avec mention de la source |
 | Étude de référence sur l'exposition à l'IA | [LIFT WP 2026-02 (Banque de France / HEC)](https://heclift.github.io/website/files/papers/LIFT_WP_2026-02.pdf) | CC BY 4.0 ; leurs scores par métier ne sont pas publiés |
 
 ## Ce qui est mesuré, et ses limites
@@ -105,7 +105,7 @@ Le programme lit un fichier `.env` du **dossier courant**. Le tien est à la rac
 VE_DATA_DIR=./data cargo run --release --manifest-path server/Cargo.toml -- serve
 ```
 
-Au démarrage, une collecte en retard (par exemple un `data/data.js` ancien) est relancée environ 30 secondes plus tard et **peut réécrire les fichiers de `data/`**. Pour un essai local sans aucune collecte, ajoute `VE_DISABLE_SCHEDULER=1` devant la commande.
+Au démarrage, une collecte en retard (par exemple un `data/data.js` ancien) est relancée **immédiatement au démarrage** (seul un fichier absent attend environ 30 secondes) et **peut réécrire les fichiers de `data/`**. Pour un essai local sans aucune collecte, ajoute `VE_DISABLE_SCHEDULER=1` devant la commande.
 
 Le site est alors servi sur `http://127.0.0.1:3210`. `/health` renvoie l'état des collectes et l'âge des fichiers. Pour lancer une collecte à la main (une ligne de résultat sur la sortie standard, les journaux sur la sortie d'erreur, code de sortie 0 ou 1) :
 

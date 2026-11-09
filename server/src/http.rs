@@ -106,3 +106,18 @@ async fn health(State(st): State<AppState>) -> Json<Value> {
         "files": files,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_assets_are_exactly_the_four_public_files() {
+        let mut names: Vec<String> = Assets::iter().map(|n| n.to_string()).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            ["app.js", "index.html", "style.css", "vendor/chart.umd.min.js"]
+        );
+    }
+}

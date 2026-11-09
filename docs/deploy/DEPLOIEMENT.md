@@ -1,12 +1,12 @@
 # Guide de déploiement HTTPS : `https://ecostat21.applicationrush.fr`
 
-Ce guide installe la version Rust de « Veille emploi France » sur un serveur Ubuntu 22.04 qui héberge déjà d'autres sites derrière nginx. Il est écrit pour être suivi **pas à pas, une commande à la fois**, par quelqu'un qui n'est pas administrateur système.
+Ce guide installe la version Rust de « Veille emploi France » sur un serveur Linux (Ubuntu ou Debian) qui héberge déjà d'autres sites derrière nginx. Il est écrit pour être suivi **pas à pas, une commande à la fois**, par quelqu'un qui n'est pas administrateur système.
 
 ## Comment lire ce guide
 
 - Chaque commande est dans son propre bloc. Copiez-la, exécutez-la, **lisez le résultat avant de passer à la suivante**.
 - Chaque étape indique si elle est **LECTURE SEULE** (ne change rien) ou **MODIFIE LE SYSTÈME**, et ce qu'on doit voir si tout va bien.
-- Les commandes s'exécutent sur le serveur, connecté en tant qu'utilisateur `ubuntu` (qui a `sudo`), sauf mention « sur votre PC ».
+- Les commandes s'exécutent sur le serveur, connecté en SSH avec votre compte d'administration, celui qui a `sudo` : dans ce guide on l'appelle **le compte administrateur** (variable `UTILISATEUR_ADMIN` dans les commandes « sur votre PC »). Ne vous connectez pas en `root`. Sauf mention « sur votre PC », les commandes s'exécutent sur le serveur.
 - Si un résultat ne ressemble pas au « résultat attendu », **arrêtez-vous** et passez à la section « Dépannage » ; ne continuez pas pour voir.
 - Les étapes ne touchent que ce qui est propre à ce site : un utilisateur `veille`, deux dossiers, un service systemd, un fichier nginx, plus une chaîne Rust dédiée installée à côté de celle du serveur. Rien d'existant n'est modifié (la chaîne Rust par défaut et les autres applications ne sont pas touchées).
 
@@ -14,7 +14,7 @@ Ce guide installe la version Rust de « Veille emploi France » sur un serveur U
 >
 > - **Ne jamais exposer le port interne** (3210 par défaut) sur Internet : le programme refuse d'ailleurs d'écouter ailleurs que sur `127.0.0.1`. Seul nginx doit être joignable de l'extérieur.
 > - **Ne jamais modifier les fichiers nginx des autres sites** : on ajoute un fichier à part, on teste avec `sudo nginx -t`, et seulement ensuite on recharge.
-> - **Ne jamais lancer la compilation avec `sudo` ni en `root`** : elle se fait avec l'utilisateur `ubuntu`. Seule l'installation du binaire demande `sudo`.
+> - **Ne jamais lancer la compilation avec `sudo` ni en `root`** : elle se fait avec le compte administrateur. Seule l'installation du binaire demande `sudo`.
 > - **Ne jamais écrire la clé France Travail dans une commande, un fichier du dépôt ou un message** : elle se saisit uniquement dans l'éditeur, sur le serveur (étape 4). Les fichiers `.env` et `/etc/veille-emploi.env` ne doivent **jamais** être commités.
 > - **Ne jamais définir `VE_DISABLE_SCHEDULER`** en production : cette variable ne sert qu'aux tests et arrête les collectes.
 
@@ -33,7 +33,7 @@ Ce guide installe la version Rust de « Veille emploi France » sur un serveur U
 
 Le programme écoute uniquement en local. nginx reçoit les visiteurs en HTTPS et transmet vers le port interne. Le programme ajoute lui-même ses en-têtes de sécurité (CSP, `nosniff`, `no-referrer`, `X-Frame-Options`) et la compression gzip : **nginx ne doit pas les répéter**.
 
-Planning des collectes (heure UTC, gérées par le programme, rien à configurer) : `core` (Indeed, Eurostat, DARES) chaque jour à 02:30 ; France Travail (`rome` puis `tech`) le lundi à 03:00. Un échec est retenté au bout d'une heure ; si plus de 10 % des codes ROME échouent, rien n'est écrit et l'ancien fichier est conservé. Une collecte en retard démarre environ 30 secondes après le lancement.
+Planning des collectes (heure UTC, gérées par le programme, rien à configurer) : `core` (Indeed, Eurostat, DARES) chaque jour à 02:30 ; France Travail (`rome` puis `tech`) le lundi à 03:00. Si plus de 10 % des codes ROME échouent, rien n'est écrit et l'ancien fichier est conservé. Au démarrage, une collecte **en retard** (fichier de données ancien) est lancée **immédiatement** ; une collecte dont le fichier est **absent** démarre environ 30 secondes après le lancement. Après un échec, seul le job en échec est retenté : `core` toutes les heures ; France Travail après 1 h, puis 6 h, puis 24 h (jamais au-delà du lundi suivant), pour ménager le quota de l'API.
 
 ---
 
@@ -217,7 +217,7 @@ Résultat : trois lignes ; les deux dernières appartiennent à `veille veille`.
 
 ## 3. Compilation sur le serveur
 
-La compilation se fait avec l'utilisateur `ubuntu` (jamais `root`), dans un clone **complet** du dépôt : l'interface web (`index.html`, `app.js`, `style.css`, `vendor/`) est incorporée au programme au moment de la compilation depuis la racine du dépôt, pas seulement depuis `server/`.
+La compilation se fait avec le compte administrateur (jamais `root`), dans un clone **complet** du dépôt : l'interface web (`index.html`, `app.js`, `style.css`, `vendor/`) est incorporée au programme au moment de la compilation depuis la racine du dépôt, pas seulement depuis `server/`.
 
 ### 3.1 Re-contrôler l'espace disque
 
@@ -244,7 +244,7 @@ git clone --branch rust-port --single-branch https://github.com/clemPerrousset/v
 La commande utilise la chaîne dédiée `+1.95.0` (étape 1.2), jamais la chaîne par défaut. Si la commande `cargo` est introuvable, rechargez l'environnement avec `. "$HOME/.cargo/env"` (à refaire à chaque nouvelle session).
 
 ```bash
-cd "$HOME/veille-emploi-src/server" && CARGO_BUILD_JOBS=2 nice cargo +1.95.0 build --release
+cd "$HOME/veille-emploi-src/server" && CARGO_BUILD_JOBS=2 nice cargo +1.95.0 build --release --locked
 ```
 
 **Résultat attendu** : se termine par ``Finished `release` profile [optimized] target(s) in ...``. Si l'erreur mentionne une version de `rustc` trop ancienne, voir « Dépannage ».
@@ -342,16 +342,16 @@ Les fichiers `rome.js` et `tech.js` viennent de l'API France Travail et ne sont 
 
 ### 5.1 Envoyer les fichiers vers un dossier temporaire du serveur (sur votre PC)
 
-**Sur votre PC, dans PowerShell.** Cette commande vous demande l'adresse du serveur (`<IP_DU_SERVEUR>`, la même qu'à l'étape 1.4) ; rien n'est modifié. **Faites cette étape et la suivante (`scp`) dans la MÊME fenêtre PowerShell** : la variable n'existe que dans la session où elle a été définie. (Variante : tapez l'adresse directement dans la ligne `scp`, à la place de `${IP_SERVEUR}`.)
+**Sur votre PC, dans PowerShell.** Ces commandes vous demandent l'adresse du serveur (`<IP_DU_SERVEUR>`, la même qu'à l'étape 1.4), le nom du compte administrateur (celui avec lequel vous vous connectez en SSH) et le chemin du dépôt local sur votre PC (`<chemin_du_dépôt_local>`, le dossier qui contient `data\rome.js` et `data\tech.js`) ; rien n'est modifié. **Faites cette étape et la suivante (`scp`) dans la MÊME fenêtre PowerShell** : les variables n'existent que dans la session où elles ont été définies.
 
 ```powershell
-$IP_SERVEUR = Read-Host "Adresse du serveur"
+$IP_SERVEUR = Read-Host "Adresse du serveur"; $UTILISATEUR_ADMIN = Read-Host "Compte administrateur (SSH)"; $DEPOT_LOCAL = Read-Host "Chemin du dépôt local"
 ```
 
 **MODIFIE LE SYSTÈME** (écrit deux fichiers dans `/tmp` du serveur). L'option `-p` conserve la date de modification d'origine : le programme s'en sert pour savoir si les données sont à jour.
 
 ```powershell
-scp -p "D:\D\Logiciels\suivi offre emploi\data\rome.js" "D:\D\Logiciels\suivi offre emploi\data\tech.js" "ubuntu@${IP_SERVEUR}:/tmp/"
+scp -p "$DEPOT_LOCAL\data\rome.js" "$DEPOT_LOCAL\data\tech.js" "${UTILISATEUR_ADMIN}@${IP_SERVEUR}:/tmp/"
 ```
 
 **Résultat attendu** : une ligne par fichier avec `100%`. (Le premier accès peut demander de confirmer l'empreinte du serveur : répondez `yes` si c'est bien votre serveur.)
@@ -378,7 +378,7 @@ sudo ls -l /var/lib/veille-emploi/data
 
 **Résultat attendu** : `rome.js` et `tech.js`, propriétaire `veille veille`, droits `-rw-r-----`.
 
-> Comme les dates d'origine sont conservées, si ces fichiers sont déjà anciens, le programme lancera lui-même une collecte France Travail environ 30 secondes après le démarrage (environ 10 minutes pour `rome`). C'est le comportement normal.
+> Comme les dates d'origine sont conservées (`scp -p`), si ces fichiers sont déjà anciens le programme les juge en retard : la collecte France Travail démarre **dès le lancement du service** (étape 6), sans attendre, et dure environ 10 minutes pour `rome`. C'est le comportement normal. (Si les fichiers sont absents, la collecte démarre environ 30 secondes après le lancement.)
 
 ---
 
@@ -412,7 +412,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/veille-emploi
+ReadWritePaths=/var/lib/veille-emploi/data
 ProtectKernelTunables=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=
@@ -484,7 +484,7 @@ On ajoute un **nouveau fichier** : aucun fichier existant n'est ouvert.
 
 ### 7.1 Créer le bloc `server`
 
-**MODIFIE LE SYSTÈME** (crée un fichier dans `sites-available`, rien n'est encore actif). Remplacez `3210` par votre port si vous en avez choisi un autre (avec `sudoedit` après coup). Les guillemets autour de `EOF` empêchent le shell de toucher aux `$` de la configuration. **Ne relancez pas cette commande si le fichier existe déjà, surtout après certbot** : elle effacerait le bloc HTTPS que certbot y a ajouté. Pour modifier ce fichier ensuite, utilisez `SUDO_EDITOR=nano sudoedit /etc/nginx/sites-available/veille-emploi.conf`.
+**MODIFIE LE SYSTÈME** (crée un fichier dans `sites-available`, rien n'est encore actif). Remplacez `3210` par votre port si vous en avez choisi un autre (avec `sudoedit` après coup). Les guillemets autour de `EOF` empêchent le shell de toucher aux `$` de la configuration. **Ne relancez pas cette commande si le fichier existe déjà, surtout après certbot** : elle effacerait le bloc HTTPS que certbot y a ajouté. Pour modifier ce fichier ensuite, utilisez `SUDO_EDITOR=nano SUDO_EDITOR=nano sudoedit /etc/nginx/sites-available/veille-emploi.conf`.
 
 ```bash
 sudo tee /etc/nginx/sites-available/veille-emploi.conf > /dev/null <<'EOF'
@@ -604,10 +604,10 @@ Si `sudo certbot certificates` liste un certificat dont les `Domains` incluent `
 Ouvrez notre fichier (et seulement lui) :
 
 ```bash
-sudoedit /etc/nginx/sites-available/veille-emploi.conf
+SUDO_EDITOR=nano sudoedit /etc/nginx/sites-available/veille-emploi.conf
 ```
 
-Remplacez tout son contenu par le texte suivant, en mettant à la place de `NOM_DU_CERTIFICAT` le nom réel du dossier (ou les chemins exacts indiqués par certbot). Gardez `3210` ou votre port. (Sur Ubuntu 22.04, la version de nginx est ancienne : `http2` s'écrit sur la ligne `listen`.)
+Remplacez tout son contenu par le texte suivant, en mettant à la place de `NOM_DU_CERTIFICAT` le nom réel du dossier (ou les chemins exacts indiqués par certbot). Gardez `3210` ou votre port. (Sur les versions de nginx anciennes, par exemple celle d'Ubuntu 22.04, `http2` s'écrit sur la ligne `listen`.)
 
 ```text
 server {
@@ -699,7 +699,7 @@ HSTS force les navigateurs à n'utiliser que HTTPS pour ce site. Une erreur est 
 Ouvrez notre fichier :
 
 ```bash
-sudoedit /etc/nginx/sites-available/veille-emploi.conf
+SUDO_EDITOR=nano sudoedit /etc/nginx/sites-available/veille-emploi.conf
 ```
 
 Dans le bloc `server` qui contient `listen 443`, ajoutez cette ligne (5 minutes) :
@@ -743,7 +743,7 @@ Dans un navigateur, ouvrez `https://ecostat21.applicationrush.fr` :
 - la page se charge avec le cadenas (certificat valide) ;
 - la page se charge **sans erreur dans la console du navigateur** (touche F12, onglet Console) ;
 - les **quatre thèmes** (Emploi, Exposition à l'IA, Tech, Mon suivi) fonctionnent : chacun affiche ses graphiques ;
-- le **pied de page** affiche les dates de collecte de chaque source ; elles doivent correspondre à `/health` ;
+- le **pied de page** affiche les dates de collecte de chaque source ; ce sont les dates `updated` propres aux fichiers de données (`/health` indique, lui, les collectes exécutées depuis le démarrage du programme et l'âge des fichiers : les deux peuvent légitimement différer) ;
 - l'écran « Sources, limites et licences » est accessible.
 
 (Le contrôle automatique des 133 combinaisons de l'interface est un test de développement, décrit dans le README, avec `tests/ui/matrix.js` : il n'est pas à faire sur le serveur.)
@@ -795,7 +795,7 @@ git -C "$HOME/veille-emploi-src" pull --ff-only
 3. Recompiler avec la chaîne dédiée (comme à l'étape 3.3 ; plusieurs minutes ; résultat attendu : ``Finished `release` profile [optimized] target(s) in ...``) :
 
 ```bash
-cd "$HOME/veille-emploi-src/server" && CARGO_BUILD_JOBS=2 nice cargo +1.95.0 build --release
+cd "$HOME/veille-emploi-src/server" && CARGO_BUILD_JOBS=2 nice cargo +1.95.0 build --release --locked
 ```
 
 4. **Garder l'ancien binaire** pour pouvoir revenir en arrière :

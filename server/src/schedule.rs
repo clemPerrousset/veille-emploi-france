@@ -8,8 +8,10 @@
 //! - un retard (arrêt prolongé du programme) est rattrapé immédiatement au démarrage ;
 //! - une boucle est séquentielle : une collecte ne se chevauche jamais elle-même, et après un
 //!   succès la suivante est toujours au créneau STRICTEMENT suivant (jamais deux fois le même) ;
-//! - un échec est consigné (`StatusBoard::record_err`) et retenté après
-//!   `RETRY_AFTER_FAILURE_SECS`.
+//! - un échec est consigné (`StatusBoard::record_err`) et seul le job en échec est retenté :
+//!   `core` après `RETRY_AFTER_FAILURE_SECS` (1 h, collecte peu coûteuse) ; France Travail
+//!   (~1 900 appels) avec un délai croissant `FT_RETRY_LADDER_SECS` (1 h, 6 h, 24 h), jamais
+//!   au-delà du créneau hebdomadaire suivant, remis à zéro après un succès.
 
 use crate::collect::{core as core_collect, rome, tech, CollectError};
 use crate::config::Config;
@@ -24,8 +26,11 @@ use std::time::Duration;
 
 /// Délai avant la première collecte quand aucun succès n'est connu.
 pub const STARTUP_DELAY_SECS: i64 = 30;
-/// Délai avant de retenter une collecte en échec.
+/// Délai avant de retenter une collecte `core` en échec.
 pub const RETRY_AFTER_FAILURE_SECS: i64 = 3600;
+/// Délais avant de retenter France Travail après 1, 2, 3 échecs consécutifs (le dernier vaut
+/// pour les suivants) : l'API n'est interrogée qu'au plus une fois par semaine en régime normal.
+pub const FT_RETRY_LADDER_SECS: [i64; 3] = [3600, 6 * 3600, 24 * 3600];
 /// Une attente longue est découpée en tranches de cette durée, puis l'heure murale est relue :
 /// une mise en veille de la machine ne retarde donc pas la collecte de plus de ce délai.
 pub const MAX_SLEEP_SECS: u64 = 900;
@@ -113,6 +118,18 @@ pub fn next_due(
     match last_ok {
         None => now + Span::seconds(STARTUP_DELAY_SECS),
         Some(ok) => next_after_success(ok, every).max(now),
+    }
+}
+
+/// Délai avant le nouvel essai après `failures` (>= 1) échecs consécutifs : échelle croissante
+/// pour la boucle hebdomadaire (France Travail), 1 h fixe pour la boucle quotidienne (`core`).
+pub fn retry_delay_secs(every: &Every, failures: u32) -> i64 {
+    match every {
+        Every::DailyAt { .. } => RETRY_AFTER_FAILURE_SECS,
+        Every::WeeklyAt { .. } => {
+            let i = (failures.max(1) as usize - 1).min(FT_RETRY_LADDER_SECS.len() - 1);
+            FT_RETRY_LADDER_SECS[i]
+        }
     }
 }
 
@@ -295,8 +312,9 @@ async fn sleep_until<C: WallClock>(clock: &C, due: DateTime<Utc>) {
 }
 
 /// Boucle d'un groupe de collectes lancées l'une après l'autre (`rome` puis `tech` pour France
-/// Travail). Ne rend jamais la main. Tous les jobs du groupe sont tentés même si l'un échoue ;
-/// le groupe est en échec si l'un d'eux l'est.
+/// Travail). Ne rend jamais la main. Tous les jobs du tour sont tentés même si l'un échoue ; seuls
+/// les jobs en échec sont retentés (`rome` réussi n'est pas relancé parce que `tech` a échoué),
+/// après `retry_delay_secs`, sans jamais dépasser le créneau suivant, où tout le groupe repart.
 pub async fn job_loop<R: Runner, C: WallClock>(
     runner: Arc<R>,
     clock: Arc<C>,
@@ -307,19 +325,36 @@ pub async fn job_loop<R: Runner, C: WallClock>(
 ) {
     let label = jobs.iter().map(|j| j.name()).collect::<Vec<_>>().join("+");
     let mut due = next_due(clock.now(), group_last_ok(&status, &seed, &jobs), &every);
+    let mut pending = jobs.clone();
+    let mut failures: u32 = 0;
     tracing::info!(jobs = %label, prochain = %due, "planification");
     loop {
         sleep_until(&*clock, due).await;
-        let mut failed = false;
-        for job in &jobs {
-            failed |= run_job(&*runner, &*clock, &status, *job).await.is_err();
+        let mut failed = Vec::new();
+        for job in &pending {
+            if run_job(&*runner, &*clock, &status, *job).await.is_err() {
+                failed.push(*job);
+            }
         }
         let now = clock.now();
-        due = if failed {
-            retry_at(now)
+        if failed.is_empty() {
+            failures = 0;
+            pending = jobs.clone();
+            due = next_after_success(now, &every);
         } else {
-            next_after_success(now, &every)
-        };
+            failures += 1;
+            let retry = now + Span::seconds(retry_delay_secs(&every, failures));
+            let slot = next_slot_after(now, &every);
+            if retry >= slot {
+                // Le créneau suivant arrive avant le nouvel essai : nouveau cycle complet.
+                failures = 0;
+                pending = jobs.clone();
+                due = slot;
+            } else {
+                pending = failed;
+                due = retry;
+            }
+        }
         tracing::info!(jobs = %label, prochain = %due, "planification");
     }
 }
@@ -745,9 +780,9 @@ mod tests {
             assert!(snap["rome"].last_error.is_some() && snap["rome"].last_ok.is_none());
             assert!(snap["tech"].last_ok.is_some() && snap["tech"].last_error.is_none());
             assert!(!snap.contains_key("core"));
-            // Le groupe est en échec : nouvel essai (rome puis tech) une heure plus tard.
+            // Seul rome (en échec) est retenté une heure plus tard ; tech, réussi, ne l'est pas.
             pass(Duration::from_secs(3601)).await;
-            assert_eq!(r.jobs(), vec![Job::Rome, Job::Tech, Job::Rome, Job::Tech]);
+            assert_eq!(r.jobs(), vec![Job::Rome, Job::Tech, Job::Rome]);
             assert!(status.snapshot()["rome"].last_ok.is_some());
             h.abort();
         })
@@ -878,5 +913,128 @@ mod tests {
             h.abort();
         })
         .await;
+    }
+
+    fn gaps_ms(calls: &[(Job, DateTime<Utc>)], job: Job) -> Vec<i64> {
+        let t: Vec<_> = calls.iter().filter(|c| c.0 == job).map(|c| c.1).collect();
+        t.windows(2)
+            .map(|w| (w[1] - w[0]).num_milliseconds())
+            .collect()
+    }
+
+    fn close(gap: i64, secs: i64) -> bool {
+        (secs * 1000..=secs * 1000 + 5).contains(&gap)
+    }
+
+    fn fails(n: usize) -> Vec<Result<(), String>> {
+        (0..n).map(|_| Err("panne".to_string())).collect()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn only_the_failed_ft_job_is_retried() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let status = StatusBoard::new();
+            // rome réussit, tech échoue une fois.
+            let r = FakeRunner::with(&clock, vec![Ok(()), Err("tech".into())], Duration::ZERO);
+            let h = spawn_loop(&r, &clock, &status, vec![Job::Rome, Job::Tech], WEEKLY);
+            pass(Duration::from_secs(3 * 3600)).await;
+            assert_eq!(r.jobs(), vec![Job::Rome, Job::Tech, Job::Tech]);
+            let calls = r.calls();
+            assert!(close((calls[2].1 - calls[1].1).num_milliseconds(), 3600));
+            h.abort();
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ft_failures_back_off_1h_6h_24h() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let status = StatusBoard::new();
+            let r = FakeRunner::with(&clock, fails(4), Duration::ZERO);
+            let h = spawn_loop(&r, &clock, &status, vec![Job::Rome], WEEKLY);
+            pass(Duration::from_secs(40 * 3600)).await;
+            let g = gaps_ms(&r.calls(), Job::Rome);
+            assert_eq!(g.len(), 3, "{g:?}");
+            assert!(
+                close(g[0], 3600) && close(g[1], 6 * 3600) && close(g[2], 24 * 3600),
+                "{g:?}"
+            );
+            h.abort();
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ft_ladder_never_goes_past_the_next_weekly_slot() {
+        local(async move {
+            // Dimanche 15 novembre 20:00 : échec, échec (retard 1 h), le 6 h dépasserait lundi 03:00.
+            let clock = TokioClock::new(utc(2026, 11, 15, 20, 0, 0));
+            let status = StatusBoard::new();
+            let r = FakeRunner::with(&clock, fails(4), Duration::ZERO);
+            let h = spawn_loop(&r, &clock, &status, vec![Job::Rome, Job::Tech], WEEKLY);
+            pass(Duration::from_secs(8 * 3600)).await;
+            let rome: Vec<_> = r.calls().into_iter().filter(|c| c.0 == Job::Rome).collect();
+            assert_eq!(rome.len(), 3);
+            let slot = utc(2026, 11, 16, 3, 0, 0);
+            assert!(
+                rome[2].1 >= slot && rome[2].1 < slot + Span::milliseconds(5),
+                "{:?}",
+                rome[2].1
+            );
+            // Nouveau cycle complet au créneau : tech y est relancé aussi.
+            assert!(r.jobs().iter().filter(|j| **j == Job::Tech).count() >= 2);
+            h.abort();
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ft_success_resets_the_ladder() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let status = StatusBoard::new();
+            let script = vec![Err("a".into()), Err("b".into()), Ok(()), Err("c".into())];
+            let r = FakeRunner::with(&clock, script, Duration::ZERO);
+            let h = spawn_loop(&r, &clock, &status, vec![Job::Rome], WEEKLY);
+            pass(Duration::from_secs(8 * 24 * 3600)).await;
+            let g = gaps_ms(&r.calls(), Job::Rome);
+            // 1 h, 6 h, (succès puis lundi suivant), puis échec -> 1 h de nouveau.
+            assert!(close(g[0], 3600) && close(g[1], 6 * 3600), "{g:?}");
+            assert!(
+                close(g[3], 3600),
+                "après succès, l'échelle repart à 1 h : {g:?}"
+            );
+            h.abort();
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn core_keeps_a_flat_one_hour_retry() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let status = StatusBoard::new();
+            let r = FakeRunner::with(&clock, fails(3), Duration::ZERO);
+            let h = spawn_loop(&r, &clock, &status, vec![Job::Core], DAILY);
+            pass(Duration::from_secs(4 * 3600)).await;
+            let g = gaps_ms(&r.calls(), Job::Core);
+            assert!(
+                g.len() >= 3 && g.iter().take(3).all(|x| close(*x, 3600)),
+                "{g:?}"
+            );
+            h.abort();
+        })
+        .await;
+    }
+
+    #[test]
+    fn retry_delay_ladder_values() {
+        assert_eq!(retry_delay_secs(&WEEKLY, 1), 3600);
+        assert_eq!(retry_delay_secs(&WEEKLY, 2), 21_600);
+        assert_eq!(retry_delay_secs(&WEEKLY, 3), 86_400);
+        assert_eq!(retry_delay_secs(&WEEKLY, 9), 86_400);
+        assert_eq!(retry_delay_secs(&DAILY, 5), 3600);
     }
 }
