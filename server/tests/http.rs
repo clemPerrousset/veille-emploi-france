@@ -116,6 +116,20 @@ async fn data_file_served_after_save() {
 }
 
 #[tokio::test]
+async fn tension_file_is_served_after_save() {
+    let (app, store, _d) = app();
+    assert_eq!(
+        get(&app, "/data/tension.js").await.status(),
+        StatusCode::NOT_FOUND
+    );
+    store.save("tension.js", &json!({"n": 0, "items": {}})).unwrap();
+    let res = get(&app, "/data/tension.js").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(hdr(&res, "content-type"), "application/javascript; charset=utf-8");
+    assert_eq!(body_string(res).await, r#"window.TENSION={"n":0,"items":{}};"#);
+}
+
+#[tokio::test]
 async fn unknown_data_name_is_404() {
     let (app, _s, dir) = app();
     // Des fichiers non listes dans le dossier de donnees ne doivent jamais sortir.
@@ -160,7 +174,8 @@ async fn health_has_no_secret_and_lists_files() {
     assert!(v["files"]["rome.js"]["age_seconds"].is_number());
     assert_eq!(v["files"]["data.js"]["exists"], false);
     assert!(v["files"]["data.js"]["age_seconds"].is_null());
-    assert_eq!(v["files"].as_object().unwrap().len(), 5);
+    assert_eq!(v["files"].as_object().unwrap().len(), 6);
+    assert_eq!(v["files"]["tension.js"]["exists"], false);
 }
 
 #[tokio::test]

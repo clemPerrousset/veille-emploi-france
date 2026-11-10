@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Enregistre des réponses RÉELLES de l'API France Travail « Marché du travail » en fixtures réduites,
-pour les tests des collecteurs `rome` et `tech` (server/tests/fixtures/ft/).
+pour les tests des collecteurs `rome`, `tech` et `tension` (server/tests/fixtures/ft/).
 
 Ce script lit le fichier .env (via fetch_rome.py) pour s'authentifier ; AUCUN secret n'est écrit dans les
 fixtures (il vérifie à la fin qu'elles ne contiennent ni le secret, ni l'identifiant, ni le jeton).
 Les réponses sont réduites : la clé `listeValeurParCaract` (détail par caractéristique, jamais utilisée par
 les collecteurs) est supprimée de chaque ligne, et seules les nomenclatures de KEEP sont gardées (la valeur
 utilisée + des séries voisines qui servent de pièges) ; les lignes gardées sont inchangées.
+Une fixture déjà présente n'est JAMAIS réécrite (les jeux de référence de server/tests/golden en dépendent) :
+relancer le script ne fait que compléter. Le collecteur `tension` a besoin des demandeurs (cat. A) et de la
+tension des codes de ROME_CODES absents de TECH_CODES, et du code sans donnée.
 
 Usage : python tools/make_ft_fixtures.py        (réseau + .env requis, une seule fois)
 """
@@ -22,6 +25,7 @@ import fetch_rome as fr  # noqa: E402  (charge .env ; ne rien afficher de ce mod
 OUT = os.path.join(ROOT, "server", "tests", "fixtures", "ft")
 ROME_CODES = ["M1805", "A1401", "K1303"]   # un métier tech, un très saisonnier, un gros volume
 TECH_CODES = ["M1805", "M1856"]
+TENSION_ONLY_CODES = [c for c in ROME_CODES if c not in TECH_CODES]   # demandeurs + tension seulement
 BASE = {"codeTypeTerritoire": "NAT", "codeTerritoire": "FR", "codeTypeActivite": "ROME"}
 DROP = "listeValeurParCaract"
 
@@ -49,7 +53,10 @@ def reduce_resp(resp, kind):
     return resp
 
 
-def save(name, obj):
+def save(name, obj, keep_existing=True):
+    if keep_existing and os.path.exists(os.path.join(OUT, name)):
+        print("conservé", name, "(déjà présent)")
+        return
     with open(os.path.join(OUT, name), "w", encoding="utf-8", newline="\n") as f:
         json.dump(obj, f, ensure_ascii=False, separators=(",", ":"), sort_keys=False)
         f.write("\n")
@@ -75,7 +82,7 @@ def main():
     chosen = ROME_CODES + ([no_data] if no_data else [])
     save("activites.json", {"activites": [by_code[c] for c in chosen]})
 
-    index = {"rome_codes": ROME_CODES, "no_data_code": no_data, "tech_codes": TECH_CODES, "calls": {}}
+    index = {"rome_codes": ROME_CODES, "no_data_code": no_data, "tech_codes": TECH_CODES, "tension_codes": TENSION_ONLY_CODES, "calls": {}}
     for code in chosen:
         body = dict(BASE, codeActivite=code, codeTypePeriode="TRIMESTRE", codeTypeNomenclature="ORIGINEOFF")
         resp = fr.call("/v1/indicateur/stat-offres", body)
@@ -88,15 +95,18 @@ def main():
         ("embauches", "/v1/indicateur/stat-embauches", "TRIMESTRE", "CATCANDxDUREEEMP"),
         ("tension", "/v1/indicateur/stat-perspective-employeur", "ANNEE", "TYPE_TENSION"),
     ]
-    for code in TECH_CODES:
+    tension_codes = TENSION_ONLY_CODES + ([no_data] if no_data else [])
+    for code in TECH_CODES + tension_codes:
         for name, path, period, nomenclature in kinds:
+            if name == "embauches" and code not in TECH_CODES:
+                continue  # le collecteur `tension` n'utilise pas les embauches
             body = dict(BASE, codeActivite=code, codeTypePeriode=period, codeTypeNomenclature=nomenclature)
             resp = fr.call(path, body)
             index["calls"][f"{name}_{code}"] = "json" if resp else "empty"
             if resp:
                 save(f"{name}_{code}.json", reduce_resp(resp, name))
 
-    save("index.json", index)
+    save("index.json", index, keep_existing=False)
 
     # Garde-fou : aucun secret dans les fixtures
     secrets = [fr.ENV["FT_CLIENT_SECRET"], fr.ENV["FT_CLIENT_ID"]]

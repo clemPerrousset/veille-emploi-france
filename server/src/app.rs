@@ -83,17 +83,22 @@ pub fn validate_bind(addr: SocketAddr) -> Result<SocketAddr, String> {
 /// retard. La date de modification n'est fiable QUE pour la planification : elle ne passe jamais
 /// par le `StatusBoard` (un fichier copié ou restauré n'est pas une collecte réussie). Une date
 /// dans le futur est ramenée à `now` ; fichier ou dossier absent : pas de date (dû dans 30 s).
+///
+/// Le job `tech` écrit deux fichiers (`tech.js` puis `tension.js`) : sa date supposée est la plus
+/// ancienne des deux, et elle est absente dès que l'un des deux manque (un `tension.js` absent ou
+/// ancien déclenche donc la collecte `tech` comme un `tech.js` absent ou ancien).
 pub fn seed_times_from_files(store: &Store, now: DateTime<Utc>) -> SeedTimes {
     let mut seed = SeedTimes::new();
-    for (job, file) in [
-        (Job::Core, "data.js"),
-        (Job::Rome, "rome.js"),
-        (Job::Tech, "tech.js"),
+    for (job, files) in [
+        (Job::Core, &["data.js"][..]),
+        (Job::Rome, &["rome.js"][..]),
+        (Job::Tech, &["tech.js", "tension.js"][..]),
     ] {
-        if let Some(modified) = store.modified(file) {
+        let modified: Option<Vec<_>> = files.iter().map(|f| store.modified(f)).collect();
+        if let Some(oldest) = modified.and_then(|m| m.into_iter().min()) {
             seed.insert(
                 job.name().to_string(),
-                DateTime::<Utc>::from(modified).min(now),
+                DateTime::<Utc>::from(oldest).min(now),
             );
         }
     }
@@ -357,10 +362,35 @@ mod tests {
     }
 
     #[test]
+    fn tech_seed_needs_both_tech_and_tension_files_and_uses_the_oldest() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path());
+        let now = now_secs();
+        let old = now - chrono::Duration::days(5);
+        // tension.js absent : pas de date, la collecte tech est due dans 30 s
+        set_mtime(dir.path(), "tech.js", now.into());
+        assert!(!seed_times_from_files(&store, now).contains_key("tech"));
+        // tech.js absent, tension.js présent : idem
+        std::fs::remove_file(dir.path().join("tech.js")).unwrap();
+        set_mtime(dir.path(), "tension.js", now.into());
+        assert!(!seed_times_from_files(&store, now).contains_key("tech"));
+        // tension.js ancien : la collecte tech est due comme si tech.js était ancien
+        set_mtime(dir.path(), "tech.js", now.into());
+        set_mtime(dir.path(), "tension.js", old.into());
+        assert_eq!(seed_times_from_files(&store, now).get("tech"), Some(&old));
+        // les deux récents : date récente ; tech.js plus ancien : c'est lui qui compte
+        set_mtime(dir.path(), "tension.js", now.into());
+        set_mtime(dir.path(), "tech.js", old.into());
+        assert_eq!(seed_times_from_files(&store, now).get("tech"), Some(&old));
+        set_mtime(dir.path(), "tech.js", now.into());
+        assert_eq!(seed_times_from_files(&store, now).get("tech"), Some(&now));
+    }
+
+    #[test]
     fn seeding_never_touches_the_status_board() {
         let dir = tempfile::tempdir().unwrap();
         let now = now_secs();
-        for f in ["data.js", "rome.js", "tech.js"] {
+        for f in ["data.js", "rome.js", "tech.js", "tension.js"] {
             set_mtime(dir.path(), f, now.into());
         }
         let status = StatusBoard::new();

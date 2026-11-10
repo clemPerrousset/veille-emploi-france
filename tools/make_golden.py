@@ -80,7 +80,7 @@ dump("data.json", {
 })
 
 
-# --- ROME et tech (API France Travail) : on exécute main() des prototypes sur les fixtures ----------
+# --- ROME, tech et tension (API France Travail) : on exécute main() des prototypes sur les fixtures ----------
 import builtins, io, sys, tempfile
 
 FT_FIX = os.path.join(FIXROOT, "ft")
@@ -137,10 +137,14 @@ class FixedDate2:
         return datetime.date(2026, 11, 9)
 
 
-def run_main_on_fixtures(mod, out_name, prefix):
-    """Exécute mod.main() avec HERE pointant vers un dossier temporaire (jamais le data/ du dépôt)."""
+def run_main_on_fixtures(mod, out_name, prefix, seed_files=None):
+    """Exécute mod.main() avec HERE pointant vers un dossier temporaire (jamais le data/ du dépôt).
+    `seed_files` : {nom: texte} déposés dans le data/ temporaire avant l'exécution (entrées du module)."""
     with tempfile.TemporaryDirectory() as tmp:
         os.makedirs(os.path.join(tmp, "data"))
+        for name, text in (seed_files or {}).items():
+            with open(os.path.join(tmp, "data", name), "w", encoding="utf-8", newline="") as f:
+                f.write(text)
         mod.HERE = tmp
         mod.date = FixedDate2
         mod.main()
@@ -156,3 +160,15 @@ ft = load_module_without_env("fetch_tech")
 ft.TECH_CODES = ["M1805", "M1856"]  # les deux codes dont les fixtures sont enregistrées
 dump("rome.json", run_main_on_fixtures(fr, "rome.js", "window.ROME="))
 dump("tech.json", run_main_on_fixtures(ft, "tech.js", "window.TECH="))
+
+# fetch_tension.main() lit data/rome.js : on lui donne celui que la partie rome vient de produire (mêmes octets
+# que fetch_rome.py l'écrit). Les 3 métiers de la fixture sont tous retenus (N = 300 > 3) ; un second jeu
+# réduit à N = 2 vérifie la sélection par volume (K1303 puis M1805 devant A1401).
+tn = load_module_without_env("fetch_tension")
+rome_obj = run_main_on_fixtures(fr, "rome.js", "window.ROME=")
+rome_js = "window.ROME=" + json.dumps(rome_obj, ensure_ascii=False, separators=(",", ":")) + ";"
+dump("tension.json", run_main_on_fixtures(tn, "tension.js", "window.TENSION=", {"rome.js": rome_js}))
+top_codes_full = tn.top_codes
+tn.top_codes = lambda rome, n=2: top_codes_full(rome, n)
+dump("tension_top2.json", run_main_on_fixtures(tn, "tension.js", "window.TENSION=", {"rome.js": rome_js}))
+tn.top_codes = top_codes_full

@@ -5,6 +5,7 @@ pub mod ft;
 pub mod indeed;
 pub mod rome;
 pub mod tech;
+pub mod tension;
 
 /// Erreur d'analyse d'une réponse de source de données.
 #[derive(Debug, thiserror::Error)]
@@ -130,6 +131,51 @@ pub(crate) mod testutil {
             RateLimiter::new(1000),
         )
         .with_backoff(Backoff::none())
+    }
+
+    /// Faux client France Travail : le comportement dépend du point d'accès et du code.
+    pub struct FakeApi(pub fn(&str, &str) -> Behavior);
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum Behavior {
+        /// Une valeur dans la série voulue.
+        Data,
+        /// Réponse valide sans aucune ligne.
+        Empty,
+        /// Échec HTTP 500 (après reprise).
+        Fail,
+    }
+
+    #[allow(clippy::manual_async_fn)] // la borne `Send` du trait exige la forme explicite
+    impl super::StatApi for FakeApi {
+        fn call<'a>(
+            &'a self,
+            path: &'a str,
+            body: Option<&'a Value>,
+        ) -> impl std::future::Future<Output = Result<Option<Value>, super::ft::FtError>> + Send + 'a
+        {
+            async move {
+                let endpoint = path.rsplit('/').next().unwrap_or("");
+                let code = body
+                    .and_then(|b| b["codeActivite"].as_str())
+                    .unwrap_or("")
+                    .to_string();
+                match (self.0)(endpoint, &code) {
+                    Behavior::Fail => Err(super::ft::FtError::Http(500)),
+                    Behavior::Empty => Ok(Some(serde_json::json!({"listeValeursParPeriode": []}))),
+                    Behavior::Data => {
+                        let (nomen, period) = match endpoint {
+                            "stat-demandeurs" => ("A", "2022T1"),
+                            "stat-embauches" => ("TOUT-TOUTE", "2022T1"),
+                            _ => ("PERSPECTIVE", "2024"),
+                        };
+                        Ok(Some(serde_json::json!({"listeValeursParPeriode": [
+                            {"codeNomenclature": nomen, "codePeriode": period,
+                             "libActivite": "Lib", "valeurPrincipaleNombre": 3}]})))
+                    }
+                }
+            }
+        }
     }
 
     pub fn with_sentinel(file: &str, var: &str) -> (tempfile::TempDir, Store, Vec<u8>) {

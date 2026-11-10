@@ -81,6 +81,20 @@
     });
   }
   var ROME_MIN = 4000; // offres cumulées sur 4 trimestres au départ : en dessous, la variation n'est que du bruit
+  /* « Où ça recrute » : tension (annuelle) et demandeurs des métiers les plus volumineux (fetch_tension.py) */
+  var TENSD = window.TENSION || null, HIRE = [], HIRE_Q = "";
+  if (R && TENSD) {
+    Object.keys(TENSD.items).forEach(function (c) {
+      var it = ITEMS["r:" + c], x = TENSD.items[c]; if (!it) return;
+      var yrs = Object.keys(x.t || {}).sort(), qs = Object.keys(x.d || {}).sort();
+      if (!yrs.length || !qs.length) return;
+      var vol = it.ys[it.ys.length - 1], dem = x.d[qs[qs.length - 1]];
+      if (!(vol > 0) || !(dem >= 0)) return;
+      HIRE_Q = HIRE_Q < qs[qs.length - 1] ? qs[qs.length - 1] : HIRE_Q;
+      HIRE.push({ key: "r:" + c, label: it.label, vol: vol, tension: x.t[yrs[yrs.length - 1]], year: yrs[yrs.length - 1], dem: dem, per100: dem / vol * 100 });
+    });
+  }
+  var HIRE_MIN_VOL = 20000; // en dessous, le rapport demandeurs / offres est trop instable pour comparer
   /* indicateurs du bloc tech : offres, demandeurs inscrits, embauches, ratio (fetch_tech.py) */
   var TECHD = window.TECH, TECH_CODES = [];
   var TECH_METRICS = { off: "Offres (4 trim.)", dem: "Demandeurs inscrits", emb: "Embauches (4 trim.)", ratio: "Offres pour 100 demandeurs" };
@@ -152,6 +166,7 @@
     { id: "aiUp", label: "Top 5 métiers IA en montée", title: "Exposés à l'IA et en montée" },
     { id: "vac", label: "Difficultés de recrutement", title: "Emplois vacants par secteur" },
     { id: "tech", label: "Spécial tech", title: "Métiers de la tech" },
+    { id: "romeHire", label: "Où ça recrute", title: "Où ça recrute : tension et demandeurs", rome: true, hire: true },
     { id: "romeUp", label: "Métiers précis en montée", title: "Métiers précis (ROME) en montée", rome: true },
     { id: "romeDown", label: "Métiers précis en descente", title: "Métiers précis (ROME) en descente", rome: true },
     { id: "romeAi", label: "Métiers précis exposés à l'IA", title: "Métiers précis les plus exposés à l'IA (estimation)", rome: true, ai: true },
@@ -159,7 +174,7 @@
     { id: "romeQ", label: "Offres par exposition à l'IA", title: "Cinq niveaux d'exposition à l'IA", rome: true, ai: true },
     { id: "romeTech", label: "Tech : tableau de bord", title: "Métiers du numérique (ROME)", rome: true, tech: true },
     { id: "mine", label: "Métiers précis", title: "Mes métiers" }
-  ].filter(function (v) { return (!v.rome || ROME_KEYS.length) && (!v.tech || TECH_CODES.length) && (!v.ai || AIR); });
+  ].filter(function (v) { return (!v.rome || ROME_KEYS.length) && (!v.tech || TECH_CODES.length) && (!v.ai || AIR) && (!v.hire || HIRE.length); });
   var state = { view: "global", period: 365, custom: "", rebase: "window", macro: [], mine: ["c:Software Development"], techMetric: "off", rankMode: "rel" };
   try { var sv = JSON.parse(localStorage.getItem("veille-emploi") || "null"); if (sv) Object.keys(state).forEach(function (k) { if (sv[k] !== undefined) state[k] = sv[k]; }); } catch (e) {}
   if (!VIEWS.some(function (v) { return v.id === state.view; })) state.view = "global";
@@ -222,6 +237,7 @@
     return upWord(keys, start, what);
   }
 
+  function hireHard() { return HIRE.filter(function (h) { return h.tension >= 4 && h.vol >= HIRE_MIN_VOL; }).sort(function (a, b) { return b.vol - a.vol; }); }
   function firstVal(item, start) { var i = lowerBound(item.xs, start); return i < item.xs.length ? item.ys[i] : 0; }
   function buildView(start) {
     var v = state.view, keys = [], summary = "", market = false, note = "", sub = "", newStart = null, show = null;
@@ -263,6 +279,13 @@
       summary = rankIntro(keys, start, "métiers précis", v === "romeUp") + names(keys, start).join(", ") + ".";
       sub = "Offres enregistrées, cumul sur 4 trimestres glissants (toutes offres, France), parmi les " + big.length + " métiers qui avaient au moins " + ROME_MIN.toLocaleString("fr-FR") + " offres cumulées au départ. Source : France Travail ; les pics isolés sont lissés. Marché global (Indeed) sur la même période : " + pct(tot.delta) + ".";
       market = true;
+    } else if (v === "romeHire") {
+      var hard = hireHard();
+      keys = hard.slice(0, 5).map(function (h) { return h.key; });
+      summary = hard.length + " métiers précis cumulent plus de " + HIRE_MIN_VOL.toLocaleString("fr-FR") + " offres sur 4 trimestres et une tension de 4 ou 5 sur 5 (recrutement difficile) : " + hard.slice(0, 3).map(function (h) { return h.label; }).join(", ") + "…";
+      sub = "Les courbes montrent les offres des 5 premiers (cumul sur 4 trimestres, France Travail). Les listes détaillées sont sous le graphique : où le recrutement est difficile, où il y a beaucoup d'offres pour peu de demandeurs, et l'inverse.";
+      market = true;
+      note = "Une offre enregistrée n'est pas un poste vacant (une même offre peut être republiée). La tension est la note annuelle de France Travail (" + HIRE[0].year + "), pas un calcul de ce site. Les demandeurs sont ceux inscrits en catégorie A, au dernier trimestre publié.";
     } else if (v === "romeTech") {
       keys = TECH_CODES.map(function (c) { return "t:" + state.techMetric + ":" + c; }).filter(function (k) { return ITEMS[k]; });
       show = keys.slice(0, 6); // les 6 plus gros métiers ; les autres se cochent dans la liste
@@ -404,6 +427,7 @@
     chart._series = series;
     renderList(series, vw);
     renderTech(start);
+    renderHire();
     $("#listtitle").textContent = (VIEWS.filter(function (v) { return v.id === state.view; })[0] || {}).title;
     cursorX = null; $("#readout").textContent = "Survole le graphique pour lire les valeurs à une date.";
     save();
@@ -445,6 +469,38 @@
     tb.appendChild(tbody);
     var e = ITEMS["t:emb:" + TECH_CODES[0]], dm = ITEMS["t:dem:" + TECH_CODES[0]];
     $("#technote").textContent = "Variations sur la période choisie (2 trimestres au minimum). Demandeurs : stock à fin " + qLabel(dm.xs[dm.xs.length - 1]) + (e ? " ; embauches publiées jusqu'à " + qLabel(e.xs[e.xs.length - 1]) : "") + ". Couleurs : vert = favorable à un candidat (plus d'offres ou d'embauches, moins de demandeurs). Tension : 5 = recrutement très difficile pour les employeurs (plutôt favorable aux candidats), 1 = facile. Indicateur annuel de France Travail.";
+  }
+
+  /* « Où ça recrute » : trois listes sous le graphique (volume x tension, peu de demandeurs, beaucoup de demandeurs) */
+  function hireTable(title, rows, withTension) {
+    var box = document.createElement("div"); box.style.margin = "0 0 14px";
+    var h = document.createElement("div"); h.className = "lbl"; h.textContent = title; box.appendChild(h);
+    var wrap = document.createElement("div"); wrap.style.overflowX = "auto";
+    var tb = document.createElement("table"), thead = document.createElement("thead"), hr = document.createElement("tr");
+    ["Métier", "Offres (4 trim.)", "Demandeurs inscrits", "Demandeurs pour 100 offres"].concat(withTension ? ["Tension (1 à 5)"] : []).forEach(function (t) { var th = document.createElement("th"); th.textContent = t; hr.appendChild(th); });
+    thead.appendChild(hr); tb.appendChild(thead);
+    var body = document.createElement("tbody");
+    rows.forEach(function (r) {
+      var tr = document.createElement("tr");
+      [r.label, nf0.format(r.vol), nf0.format(r.dem), nf0.format(r.per100)].concat(withTension ? [r.tension + " / 5"] : []).forEach(function (t) { var td = document.createElement("td"); td.textContent = t; tr.appendChild(td); });
+      body.appendChild(tr);
+    });
+    tb.appendChild(body); wrap.appendChild(tb); box.appendChild(wrap);
+    return box;
+  }
+  function renderHire() {
+    var on = state.view === "romeHire" && HIRE.length > 0;
+    $("#hirecard").hidden = !on;
+    if (!on) return;
+    var big = HIRE.filter(function (h) { return h.vol >= HIRE_MIN_VOL; });
+    var easy = big.slice().sort(function (a, b) { return a.per100 - b.per100; }).slice(0, 10);
+    var crowded = big.slice().sort(function (a, b) { return b.per100 - a.per100; }).slice(0, 8);
+    var body = $("#hirebody"); body.innerHTML = "";
+    body.appendChild(hireTable("Beaucoup d'offres et recrutement difficile (tension 4 ou 5)", hireHard().slice(0, 12), true));
+    body.appendChild(hireTable("Beaucoup d'offres pour peu de demandeurs : trouver un travail y est le plus facile", easy, true));
+    body.appendChild(hireTable("Plus de demandeurs que d'offres : trouver un travail y est le plus difficile", crowded, true));
+    var q = HIRE_Q, ql = "T" + q.slice(5) + " " + q.slice(0, 4);
+    $("#hirenote").textContent = "Métiers de plus de " + HIRE_MIN_VOL.toLocaleString("fr-FR") + " offres sur 4 trimestres, parmi les " + HIRE.length + " plus volumineux. Demandeurs inscrits en catégorie A à fin " + ql + ". Un faible nombre de demandeurs peut aussi venir d'un métier qui recrute surtout hors France Travail (médecin, expert-comptable). Ce classement n'est pas une prévision.";
   }
 
   function renderList(series, vw) {
@@ -500,27 +556,32 @@
   /* ---------- contrôles ---------- */
   /* navigation à deux niveaux : thème > vue, avec un interrupteur de détail pour les vues qui existent en deux versions */
   var NAV = [
-    { g: "Emploi", items: [
-      { label: "Global", id: "global" },
-      { label: "Métiers en montée", rel: "Métiers qui résistent", ids: { cat: "empUp", rome: "romeUp" } },
-      { label: "Métiers en descente", rel: "Métiers qui décrochent", ids: { cat: "empDown", rome: "romeDown" } },
-      { label: "Secteurs en montée", rel: "Secteurs qui résistent", id: "secUp" },
-      { label: "Secteurs en descente", rel: "Secteurs qui décrochent", id: "secDown" },
-      { label: "Difficultés de recrutement", id: "vac" }] },
-    { g: "Exposition à l'IA", items: [
-      { label: "Les plus exposés", ids: { cat: "aiExp", rome: "romeAi" } },
-      { label: "Exposés et en montée", ids: { cat: "aiUp", rome: "romeAiUp" } },
-      { label: "Par niveau d'exposition", id: "romeQ" }] },
-    { g: "Tech", items: [
-      { label: "Vue rapide (Indeed)", id: "tech" },
-      { label: "Tableau de bord (France Travail)", id: "romeTech" }] },
-    { g: "Métiers précis", items: [{ label: "Mes métiers", id: "mine" }] }
+    { g: "Emploi", desc: "Combien d'offres d'emploi, où ça résiste, où ça baisse, et où l'on recrute.", items: [
+      { sec: "Vue d'ensemble", label: "Global", id: "global", desc: "Le nombre d'offres d'emploi en France depuis 2020 (100 = février 2020), toutes offres confondues." },
+      { sec: "Qui résiste, qui baisse", label: "Métiers en montée", rel: "Métiers qui résistent", ids: { cat: "empUp", rome: "romeUp" },
+        desc: "Les 5 métiers dont les offres vont le mieux, sur la période choisie.", descRel: "Les 5 métiers dont les offres baissent le moins par rapport à l'ensemble du marché." },
+      { sec: "Qui résiste, qui baisse", label: "Métiers en descente", rel: "Métiers qui décrochent", ids: { cat: "empDown", rome: "romeDown" },
+        desc: "Les 5 métiers dont les offres baissent le plus, sur la période choisie.", descRel: "Les 5 métiers qui baissent le plus par rapport à l'ensemble du marché." },
+      { sec: "Qui résiste, qui baisse", label: "Secteurs en montée", rel: "Secteurs qui résistent", id: "secUp",
+        desc: "Les 5 secteurs (groupes de métiers) dont les offres vont le mieux.", descRel: "Les 5 secteurs dont les offres baissent le moins par rapport au marché." },
+      { sec: "Qui résiste, qui baisse", label: "Secteurs en descente", rel: "Secteurs qui décrochent", id: "secDown",
+        desc: "Les 5 secteurs dont les offres baissent le plus.", descRel: "Les 5 secteurs qui baissent le plus par rapport au marché." },
+      { sec: "Où l'on recrute", label: "Difficultés de recrutement", id: "vac", desc: "Pour chaque secteur, la part des postes à pourvoir qui ne trouvent pas preneur (taux d'emplois vacants)." },
+      { sec: "Où l'on recrute", label: "Où ça recrute", id: "romeHire", desc: "Les métiers qui recrutent beaucoup mais avec difficulté, et ceux où trouver un travail est le plus facile ou le plus dur." }] },
+    { g: "Exposition à l'IA", desc: "Quels métiers l'IA peut transformer (estimations), et ce que font leurs offres.", items: [
+      { sec: "Classements", label: "Les plus exposés", ids: { cat: "aiExp", rome: "romeAi" }, desc: "Les 5 métiers jugés les plus transformables par l'IA, avec l'évolution de leurs offres." },
+      { sec: "Classements", label: "Exposés et en montée", ids: { cat: "aiUp", rome: "romeAiUp" }, desc: "Parmi les métiers très exposés à l'IA, les 5 dont les offres progressent le plus." },
+      { sec: "Comparaison", label: "Par niveau d'exposition", id: "romeQ", desc: "Les offres regroupées en 5 niveaux d'exposition à l'IA, du moins au plus exposé." }] },
+    { g: "Tech", desc: "Le numérique de près : développeurs, systèmes, infrastructure.", items: [
+      { sec: "Aperçu", label: "Vue rapide (Indeed)", id: "tech", desc: "Les 3 catégories Indeed du numérique : développement logiciel, systèmes IT, infrastructure et support." },
+      { sec: "Détail", label: "Tableau de bord (France Travail)", id: "romeTech", desc: "18 métiers du numérique : offres, demandeurs inscrits, embauches et tension de recrutement." }] },
+    { g: "Métiers précis", desc: "Suivre un ou plusieurs métiers de ton choix.", items: [{ sec: "Mon suivi", label: "Mes métiers", id: "mine", desc: "Compare jusqu'à 6 métiers que tu choisis, en catégories Indeed ou en métiers précis." }] }
   ];
   function hasView(id) { return VIEWS.some(function (v) { return v.id === id; }); }
   function itemIds(it) { return (it.id ? [it.id] : [it.ids.cat, it.ids.rome]).filter(hasView); }
   function resolveItem(it, detail) { return it.id || (detail === "rome" && hasView(it.ids.rome) ? it.ids.rome : it.ids.cat); }
   function renderNav() {
-    var groups = NAV.map(function (g) { return { g: g.g, items: g.items.filter(function (it) { return itemIds(it).length; }) }; }).filter(function (g) { return g.items.length; });
+    var groups = NAV.map(function (g) { return { g: g.g, desc: g.desc, items: g.items.filter(function (it) { return itemIds(it).length; }) }; }).filter(function (g) { return g.items.length; });
     var cur = null, curG = groups[0];
     groups.forEach(function (g) { g.items.forEach(function (it) { if (itemIds(it).indexOf(state.view) >= 0) { cur = it; curG = g; } }); });
     var detail = cur && cur.ids && state.view === cur.ids.rome ? "rome" : "cat";
@@ -529,16 +590,31 @@
       var b = chip(g.g, g === curG, function () { state.view = resolveItem(g.items[0], detail); buildControls(); render(); });
       b.classList.add("tab"); gEl.appendChild(b);
     });
+    $("#groupdesc").textContent = curG.desc || "";
     var vEl = $("#views"); vEl.innerHTML = "";
-    curG.items.forEach(function (it) { vEl.appendChild(chip(it.rel && state.rankMode === "rel" ? it.rel : it.label, it === cur, function () { state.view = resolveItem(it, detail); buildControls(); render(); })); });
+    var secs = [];
+    curG.items.forEach(function (it) { if (secs.indexOf(it.sec) < 0) secs.push(it.sec); });
+    secs.forEach(function (sec) {
+      var box = document.createElement("div"); box.className = "grp vsec";
+      if (secs.length > 1) { var t = document.createElement("span"); t.className = "lbl"; t.textContent = sec; box.appendChild(t); }
+      curG.items.filter(function (it) { return it.sec === sec; }).forEach(function (it) {
+        var c = chip(it.rel && state.rankMode === "rel" ? it.rel : it.label, it === cur, function () { state.view = resolveItem(it, detail); buildControls(); render(); });
+        c.title = (it.descRel && state.rankMode === "rel" ? it.descRel : it.desc) || "";
+        box.appendChild(c);
+      });
+      vEl.appendChild(box);
+    });
+    $("#viewdesc").textContent = cur ? ((cur.descRel && state.rankMode === "rel" ? cur.descRel : cur.desc) || "") : "";
     var both = cur && cur.ids && hasView(cur.ids.cat) && hasView(cur.ids.rome);
     $("#detailrow").hidden = !both;
     var ranked = !!(cur && cur.rel);
     $("#moderow").hidden = !ranked;
+    $("#modehint").textContent = ranked ? (state.rankMode === "rel" ? "« Par rapport au marché » : un métier résiste s'il baisse moins que l'ensemble des offres, même s'il baisse." : "« Variation réelle » : la hausse ou la baisse brute des offres, en %. Quand tout baisse, la liste « montée » montre ceux qui baissent le moins.") : "";
     var mEl2 = $("#rankmode"); mEl2.innerHTML = "";
     if (ranked) [["rel", "Par rapport au marché"], ["abs", "Variation réelle"]].forEach(function (d) {
       mEl2.appendChild(chip(d[1], state.rankMode === d[0], function () { state.rankMode = d[0]; buildControls(); render(); }));
     });
+    $("#detailhint").textContent = both ? "Catégories Indeed : 34 grandes familles de métiers, données quotidiennes. Métiers précis : codes ROME de France Travail (1 900 métiers), données trimestrielles." : "";
     var dEl = $("#detail"); dEl.innerHTML = "";
     if (both) [["cat", "Catégories Indeed (quotidien)"], ["rome", "Métiers précis (trimestriel)"]].forEach(function (d) {
       dEl.appendChild(chip(d[1], detail === d[0], function () { state.view = cur.ids[d[0]]; buildControls(); render(); }));
@@ -601,6 +677,7 @@
     var collectes = " Dernières collectes : Indeed/Eurostat/DARES " + dateFr(ms(D.updated), true);
     if (window.ROME && window.ROME.updated) collectes += ", France Travail (métiers) " + dateFr(ms(window.ROME.updated), true);
     if (window.TECH && window.TECH.updated) collectes += ", France Travail (tech) " + dateFr(ms(window.TECH.updated), true);
+    if (window.TENSION && window.TENSION.updated) collectes += ", France Travail (tension) " + dateFr(ms(window.TENSION.updated), true);
     $("#updated").textContent += collectes + ".";
   } catch (e) { /* ROME absent ou date illisible : on garde le texte de base */ }
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);

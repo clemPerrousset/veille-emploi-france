@@ -13,6 +13,11 @@ button{font:inherit;color:inherit;cursor:pointer}
 .chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
 .row{display:flex;flex-wrap:wrap;gap:14px 22px;align-items:center}
 .lbl{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-right:8px}
+.hint{font-size:13px;color:var(--muted);margin:2px 0 12px;line-height:1.4}
+.hint:empty{display:none}
+.step{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin-bottom:4px}
+.vlist{display:flex;flex-direction:column;gap:8px}
+.vsec{gap:6px}
 .grp{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 label.chk{display:inline-flex;gap:6px;align-items:center;font-size:14px;cursor:pointer}
 select,input[type=date]{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:5px 8px}

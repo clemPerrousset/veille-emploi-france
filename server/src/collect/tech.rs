@@ -1,5 +1,5 @@
 //! Collecteur `tech` : demandeurs, embauches et tension des métiers du numérique → `tech.js`.
-//! Même résultat que `fetch_tech.py`.
+//! Même résultat que `fetch_tech.py`. Le job `tech` écrit ensuite `tension.js` (voir `tension`).
 
 use super::rome::MIN_PERIOD;
 use super::{ft_error, CollectError, StatApi};
@@ -42,11 +42,12 @@ pub fn parse_series(resp: &Value, wanted: &str) -> (Map<String, Value>, Option<S
     (out, label)
 }
 
-type Series = (Map<String, Value>, Option<String>);
+pub(super) type Series = (Map<String, Value>, Option<String>);
 
-/// Une série de l'API ; tout échec nomme le code et le point d'accès.
-async fn series<C: StatApi>(
+/// Une série de l'API ; tout échec nomme le collecteur (`source`), le code et le point d'accès.
+pub(super) async fn series<C: StatApi>(
     client: &C,
+    source: &str,
     code: &str,
     endpoint: &str,
     period: &str,
@@ -60,17 +61,29 @@ async fn series<C: StatApi>(
     let resp = client
         .call(&path, Some(&body))
         .await
-        .map_err(|e| ft_error(&format!("france travail tech {code} {endpoint}"), e))?;
+        .map_err(|e| ft_error(&format!("france travail {source} {code} {endpoint}"), e))?;
     Ok(resp.map_or_else(|| (Map::new(), None), |r| parse_series(&r, wanted)))
 }
 
-/// `tech.js` pour les codes de `TECH_CODES`.
+/// Job `tech` : `tech.js` (codes de `TECH_CODES`) puis `tension.js` (métiers de `rome.js`).
+///
+/// Politique d'échec : les deux volets sont indépendants et tentés tous les deux (un `rome.js` absent
+/// n'empêche pas l'écriture de `tech.js`, un échec de `tech.js` n'empêche pas celle de `tension.js`) ;
+/// chacun garde son ancien fichier en cas d'échec. Le job est en échec (donc retenté par le
+/// planificateur) dès qu'un des deux volets échoue ; si les deux échouent, les deux messages sont
+/// conservés.
 pub async fn run<C: StatApi>(
     client: &C,
     store: &Store,
     today: NaiveDate,
 ) -> Result<(), CollectError> {
-    run_with_codes(client, store, today, &TECH_CODES).await
+    let tech = run_with_codes(client, store, today, &TECH_CODES).await;
+    let tension = super::tension::run(client, store, today, super::rome::DEFAULT_WORKERS).await;
+    match (tech, tension) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(e), Ok(())) | (Ok(()), Err(e)) => Err(e),
+        (Err(a), Err(b)) => Err(CollectError::Fetch(format!("{a} ; {b}"))),
+    }
 }
 
 /// Comme `run`, pour une liste de codes donnée (les tests utilisent les deux codes enregistrés).
@@ -83,9 +96,19 @@ pub async fn run_with_codes<C: StatApi>(
 ) -> Result<(), CollectError> {
     let mut raw = Vec::new();
     for code in codes {
-        let (d, l1) = series(client, code, "stat-demandeurs", "TRIMESTRE", "CATCAND", "A").await?;
+        let (d, l1) = series(
+            client,
+            "tech",
+            code,
+            "stat-demandeurs",
+            "TRIMESTRE",
+            "CATCAND",
+            "A",
+        )
+        .await?;
         let (e, l2) = series(
             client,
+            "tech",
             code,
             "stat-embauches",
             "TRIMESTRE",
@@ -95,6 +118,7 @@ pub async fn run_with_codes<C: StatApi>(
         .await?;
         let (t, l3) = series(
             client,
+            "tech",
             code,
             "stat-perspective-employeur",
             "ANNEE",
@@ -318,5 +342,96 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(std::fs::read(dir.path().join("tech.js")).unwrap(), sentinel);
+    }
+
+    // --- job complet : tech.js puis tension.js ---------------------------------------------------
+
+    /// Magasin avec les deux sentinelles (tech.js, tension.js) et, si donné, un rome.js minimal.
+    fn job_store(rome: bool) -> (tempfile::TempDir, Store, Vec<u8>) {
+        let (dir, store, sentinel) = with_sentinel("tech.js", "TECH");
+        std::fs::write(dir.path().join("tension.js"), &sentinel).unwrap();
+        if rome {
+            store
+                .save(
+                    "rome.js",
+                    &json!({"periods": [], "items": {"M1805": {"l": "x", "o": [5]}}}),
+                )
+                .unwrap();
+        }
+        (dir, store, sentinel)
+    }
+
+    #[tokio::test]
+    async fn job_writes_tech_then_tension() {
+        let (dir, store, sentinel) = job_store(true);
+        run(&FakeApi(|_, _| Behavior::Data), &store, day())
+            .await
+            .unwrap();
+        let tech = payload(dir.path(), "tech.js", "TECH");
+        assert_eq!(keys(&tech["items"]).len(), 18);
+        let tension = payload(dir.path(), "tension.js", "TENSION");
+        assert_eq!(tension["n"], 1);
+        assert_eq!(keys(&tension["items"]), ["M1805"]);
+        assert_ne!(
+            std::fs::read(dir.path().join("tension.js")).unwrap(),
+            sentinel
+        );
+        // rome.js, tech.js, tension.js : pas de fichier temporaire
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 3);
+    }
+
+    #[tokio::test]
+    async fn job_without_rome_js_still_writes_tech_js_but_fails() {
+        let (dir, store, sentinel) = job_store(false);
+        let err = run(&FakeApi(|_, _| Behavior::Data), &store, day())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("rome.js absent"), "{err}");
+        // tech.js écrit, tension.js ancien conservé
+        let tech = payload(dir.path(), "tech.js", "TECH");
+        assert_eq!(keys(&tech["items"]).len(), 18);
+        assert_eq!(
+            std::fs::read(dir.path().join("tension.js")).unwrap(),
+            sentinel
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[tokio::test]
+    async fn job_tech_failure_does_not_block_tension_and_is_reported() {
+        // les embauches (tech seulement) échouent : tech.js reste ancien, tension.js est écrit
+        let (dir, store, sentinel) = job_store(true);
+        let err = run(
+            &FakeApi(|ep, _| {
+                if ep == "stat-embauches" {
+                    Behavior::Fail
+                } else {
+                    Behavior::Data
+                }
+            }),
+            &store,
+            day(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("tech M1805 stat-embauches"),
+            "{err}"
+        );
+        assert_eq!(std::fs::read(dir.path().join("tech.js")).unwrap(), sentinel);
+        assert_eq!(payload(dir.path(), "tension.js", "TENSION")["n"], 1);
+        // les deux échouent : les deux messages sont conservés, les deux anciens fichiers aussi
+        let (dir, store, sentinel) = job_store(false);
+        let err = run(&FakeApi(|_, _| Behavior::Fail), &store, day())
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("tech M1805") && msg.contains("rome.js absent"),
+            "{msg}"
+        );
+        for f in ["tech.js", "tension.js"] {
+            assert_eq!(std::fs::read(dir.path().join(f)).unwrap(), sentinel, "{f}");
+        }
     }
 }

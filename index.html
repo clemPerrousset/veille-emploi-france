@@ -14,12 +14,16 @@
   </header>
 
   <div class="card">
-    <div class="grp" style="margin-bottom:10px"><span class="lbl">Thème</span><div class="views" id="groups" role="group" aria-label="Choix du thème"></div></div>
-    <div class="grp" style="margin-bottom:10px"><span class="lbl">Vue</span><div class="views" id="views" role="group" aria-label="Choix de la vue"></div></div>
-    <div class="grp" id="moderow" style="margin-bottom:10px" hidden><span class="lbl">Mesure</span><span id="rankmode" class="grp" role="group" aria-label="Mesure du classement"></span></div>
-    <div class="grp" id="detailrow" style="margin-bottom:10px" hidden><span class="lbl">Niveau de détail</span><span id="detail" class="grp" role="group" aria-label="Niveau de détail des métiers"></span></div>
+    <div class="step"><span class="lbl">1 · Que veux-tu voir ?</span><div class="views" id="groups" role="group" aria-label="Choix du thème"></div></div>
+    <p class="hint" id="groupdesc"></p>
+    <div class="step"><span class="lbl">2 · Quelle vue ?</span><div class="vlist" id="views" role="group" aria-label="Choix de la vue"></div></div>
+    <p class="hint" id="viewdesc"></p>
+    <div class="grp" id="moderow" style="margin-bottom:4px" hidden><span class="lbl">Classer selon</span><span id="rankmode" class="grp" role="group" aria-label="Mesure du classement"></span></div>
+    <p class="hint" id="modehint"></p>
+    <div class="grp" id="detailrow" style="margin-bottom:4px" hidden><span class="lbl">Précision des métiers</span><span id="detail" class="grp" role="group" aria-label="Niveau de détail des métiers"></span></div>
+    <p class="hint" id="detailhint"></p>
     <div class="row">
-      <div class="grp"><span class="lbl">Période</span><span id="periods" class="grp" role="group" aria-label="Durée du graphique"></span>
+      <div class="grp"><span class="lbl">3 · Sur quelle période ?</span><span id="periods" class="grp" role="group" aria-label="Durée du graphique"></span>
         <label class="chk" style="margin-left:6px">depuis <input type="date" id="custom" min="2020-02-01"></label></div>
     </div>
     <details id="opts" open style="margin-top:10px">
@@ -65,6 +69,11 @@
     <p id="technote" style="font-size:12px;color:var(--muted);margin:8px 0 0"></p>
   </div>
 
+  <div class="card" id="hirecard" hidden>
+    <div id="hirebody"></div>
+    <p id="hirenote" style="font-size:12px;color:var(--muted);margin:8px 0 0"></p>
+  </div>
+
   <div class="card">
     <footer>
       <details>
@@ -75,6 +84,7 @@
           <li><b>France Travail et DARES</b> (<a href="https://data.dares.travail-emploi.gouv.fr">open data DARES</a>, Licence Ouverte) : offres collectées par France Travail et demandeurs d'emploi de catégorie A (mensuels, CVS-CJO, France métropolitaine), taux d'emplois vacants par secteur (trimestriel, entreprises de plus de 10 salariés). Aucune série <b>par métier</b> n'est publiée en open data : le détail par métier (codes ROME) passe par l'API France Travail, qui demande une inscription.</li>
           <li><b>Métiers précis (ROME)</b> : <a href="https://francetravail.io/produits-partages/catalogue/marche-travail">API Marché du travail</a> de France Travail (source : France Travail, API Marché du travail, Licence Ouverte Etalab), offres enregistrées par trimestre et par métier (« toutes offres », France entière, arrondies à la dizaine). Ce sont des flux trimestriels, pas un stock d'offres ouvertes. Pour éviter la saisonnalité, l'outil affiche le cumul sur 4 trimestres glissants (la courbe réagit donc avec un décalage) et remplace les pics isolés (au moins 3 fois la médiane des mêmes trimestres des autres années) par cette médiane. Ce nettoyage est le mien : les données brutes contiennent de tels pics, par exemple fin 2024. Les ordres de grandeur ne sont pas comparables à l'index Indeed, mais les tendances le sont.</li>
           <li><b>Tableau de bord tech</b> : même API France Travail : demandeurs d'emploi inscrits en catégorie A (stock à fin de trimestre), embauches (cumul sur 4 trimestres, publiées avec un retard de plusieurs trimestres) et indicateur annuel de tension de 1 à 5. Les 18 métiers du numérique sont ma sélection de codes ROME, modifiable dans <code>fetch_tech.py</code>. Les licenciements tech (layoffhedge) ne sont pas intégrés : le jeu de données ne couvre que 2026 et surtout de grandes entreprises mondiales.</li>
+          <li><b>Où ça recrute</b> : même API France Travail, pour les 300 métiers qui ont le plus d'offres : indicateur annuel de tension (de 1 à 5) et demandeurs d'emploi inscrits en catégorie A. Le rapport demandeurs / offres est calculé par ce site (stock de demandeurs rapporté à un cumul d'offres sur un an) : il sert à comparer les métiers entre eux, pas à compter des postes. Sélection modifiable dans <code>fetch_tension.py</code>.</li>
           <li><b>Exposition à l'IA par métier précis</b> : estimation d'un modèle de langage (Claude) à partir de l'intitulé de chaque métier ROME, pour les métiers les plus fréquents (environ 94 % des offres), sur une échelle de 0 à 100 (part des tâches que l'IA générative peut réaliser ou assister). Méthode inspirée de l'<a href="https://heclift.github.io/website/files/papers/LIFT_WP_2026-02.pdf">indice de la Banque de France et de HEC (LIFT WP 2026-02, CC BY 4.0)</a>, dont les scores par métier ne sont pas publiés. C'est une capacité technique potentielle, pas un usage réel ni une prévision d'emplois supprimés.</li>
           <li><b>Exposition à l'IA</b> : <b>estimation personnelle</b> par catégorie, inspirée des travaux publics (OIT, Anthropic Economic Index, Eloundou et al.), pas leurs scores. À remplacer par un rapprochement officiel.</li>
           <li><b>Secteurs</b> : moyenne simple des catégories Indeed d'un même groupe, sans pondération par le nombre d'emplois.</li>
@@ -91,6 +101,7 @@
 <script src="data/ai_exposure.js"></script>
 <script src="data/rome.js"></script>
 <script src="data/tech.js"></script>
+<script src="data/tension.js"></script>
 <script src="data/ai_rome.js"></script>
 <script src="app.js"></script>
 </body>

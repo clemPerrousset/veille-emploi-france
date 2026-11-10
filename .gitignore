@@ -9,6 +9,7 @@
 # générées par le serveur (ou fetch_rome.py / fetch_tech.py), donc non versionnées. Voir README.md.
 data/rome.js
 data/tech.js
+data/tension.js
 
 # Fichiers parasites
 __pycache__/

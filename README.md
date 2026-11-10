@@ -16,9 +16,10 @@ Python 3.10 ou plus récent, sans aucune dépendance à installer.
 python fetch_data.py    # Indeed, Eurostat, DARES : quelques secondes
 python fetch_rome.py    # offres par métier (France Travail) : environ 10 minutes
 python fetch_tech.py    # demandeurs, embauches, tension des métiers tech : moins d'une minute
+python fetch_tension.py # tension et demandeurs des 300 métiers les plus volumineux (vue « Où ça recrute ») : environ 5 minutes
 ```
 
-`fetch_rome.py` et `fetch_tech.py` ont besoin d'un fichier `.env` (voir plus bas). `fetch_data.py` n'en a pas besoin. Les données France Travail changent au rythme trimestriel : inutile de les relancer plus d'une fois par trimestre. Indeed est quotidien.
+`fetch_rome.py`, `fetch_tech.py` et `fetch_tension.py` (à lancer après `fetch_rome.py`) ont besoin d'un fichier `.env` (voir plus bas). `fetch_data.py` n'en a pas besoin. Les données France Travail changent au rythme trimestriel : inutile de les relancer plus d'une fois par trimestre. Indeed est quotidien.
 
 ## Le fichier `.env` (secret, jamais publié)
 
@@ -35,7 +36,7 @@ FT_CLIENT_SECRET=...
 
 | Thème | Vues |
 |---|---|
-| Emploi | Global, métiers en montée / en descente, secteurs en montée / en descente, difficultés de recrutement |
+| Emploi | Global, métiers en montée / en descente (ou « qui résistent / qui décrochent » par rapport au marché), secteurs en montée / en descente, difficultés de recrutement, **où ça recrute** (métiers nombreux en offres et difficiles à pourvoir, métiers où trouver un travail est le plus facile ou le plus difficile) |
 | Exposition à l'IA | les plus exposés, exposés et en montée, par niveau d'exposition (5 groupes) |
 | Tech | vue rapide (3 catégories Indeed), tableau de bord (18 métiers : offres, demandeurs, embauches, tension) |
 | Métiers précis | jusqu'à 6 métiers de ton choix, catégories Indeed ou métiers précis |
@@ -57,6 +58,7 @@ Un interrupteur « Niveau de détail » bascule entre les **catégories Indeed**
 - **Indeed** mesure les offres publiées sur Indeed, pas l'emploi total ni les embauches.
 - **Métiers précis (ROME)** : offres enregistrées par trimestre, arrondies à la dizaine. L'outil affiche le **cumul sur 4 trimestres glissants** (supprime la saisonnalité) et **remplace les pics isolés** (au moins 3 fois la médiane des mêmes trimestres des autres années, et +500) par cette médiane. Ce nettoyage est un choix du projet ; les données brutes contiennent de tels pics (par exemple fin 2024). Les courbes réagissent donc avec un décalage de quelques trimestres.
 - **Embauches** : publiées avec plusieurs trimestres de retard. L'outil étend la période pour les inclure.
+- **Où ça recrute** : la tension est la note annuelle (1 à 5) de France Travail. Le rapport « demandeurs pour 100 offres » est calculé par l'outil (stock de demandeurs de catégorie A rapporté à un cumul d'offres sur un an) : il sert à comparer les métiers entre eux, pas à compter des postes. Une offre enregistrée n'est pas un poste vacant, et un faible nombre de demandeurs peut venir d'un métier qui recrute surtout hors France Travail (médecin, expert-comptable).
 - **Secteurs** : moyenne simple des catégories Indeed d'un groupe, sans pondération par l'emploi.
 - Une baisse d'offres n'est pas une preuve que l'IA en est la cause : le cycle économique, les taux d'intérêt et la correction post-Covid de la tech pèsent aussi.
 
@@ -80,6 +82,7 @@ Pour corriger un score, modifie le fichier à la main. Une vérification plus so
 | `fetch_data.py` | collecte Indeed, Eurostat, DARES, écrit `data/data.js` |
 | `fetch_rome.py` | collecte les offres des 1 900 métiers ROME, écrit `data/rome.js` |
 | `fetch_tech.py` | collecte demandeurs, embauches, tension (18 métiers tech), écrit `data/tech.js`. La liste des codes est modifiable en tête du fichier |
+| `fetch_tension.py` | collecte la tension annuelle et les demandeurs des 300 métiers aux plus d'offres (lit `data/rome.js`), écrit `data/tension.js` |
 | `data/*.js` | données chargées par `index.html` (valeurs assignées à `window.*`, pour fonctionner sans serveur) |
 | `server/` | version Rust : serveur web et collecteurs (voir « Version Rust ») |
 | `docs/deploy/DEPLOIEMENT.md` | guide de déploiement HTTPS sur le serveur |
@@ -124,7 +127,7 @@ Les tâches possibles sont `core` (Indeed, Eurostat, DARES), `rome` et `tech` (F
 
 Un fichier `.env` du dossier courant est lu au démarrage (l'environnement du processus a priorité) ; en production, on utilise à la place un fichier d'environnement systemd. `ai_exposure.js` et `ai_rome.js` sont créés au premier démarrage à partir de valeurs par défaut incorporées, sans jamais écraser un fichier existant.
 
-**Test de l'interface (développeurs)** : `tests/ui/matrix.js` parcourt automatiquement les 133 combinaisons de l'interface ; ce n'est pas un contrôle à faire sur le serveur.
+**Test de l'interface (développeurs)** : `tests/ui/matrix.js` parcourt automatiquement les 140 combinaisons de l'interface ; ce n'est pas un contrôle à faire sur le serveur.
 
 **Mise en ligne** : suivez [`docs/deploy/DEPLOIEMENT.md`](docs/deploy/DEPLOIEMENT.md) (compilation sur le serveur, service systemd, nginx, HTTPS avec Let's Encrypt, exploitation).
 

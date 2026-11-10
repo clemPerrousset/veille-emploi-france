@@ -125,7 +125,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // Absents : jamais créés.
         seed_defaults(dir.path()).unwrap();
-        for f in ["data.js", "rome.js", "tech.js"] {
+        for f in ["data.js", "rome.js", "tech.js", "tension.js"] {
             assert!(!dir.path().join(f).exists(), "{f} ne doit pas être créé");
         }
         // Présents : octets identiques.
@@ -133,6 +133,7 @@ mod tests {
             ("data.js", &b"window.DATA={\"a\":1};"[..]),
             ("rome.js", b"window.ROME={};"),
             ("tech.js", b"window.TECH={};"),
+            ("tension.js", b"window.TENSION={};"),
         ] {
             std::fs::write(dir.path().join(f), body).unwrap();
         }
@@ -148,6 +149,10 @@ mod tests {
         assert_eq!(
             std::fs::read(dir.path().join("tech.js")).unwrap(),
             b"window.TECH={};"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("tension.js")).unwrap(),
+            b"window.TENSION={};"
         );
     }
 
@@ -190,7 +195,7 @@ mod tests {
             let emb = Defaults::get(&format!("data/{f}")).unwrap();
             assert_eq!(emb.data.as_ref(), repo(f).as_slice(), "{f}");
         }
-        for other in ["data/rome.js", "data/tech.js", "data/data.js", ".env"] {
+        for other in ["data/rome.js", "data/tech.js", "data/tension.js", "data/data.js", ".env"] {
             assert!(
                 Defaults::get(other).is_none(),
                 "{other} ne doit pas être embarqué"
