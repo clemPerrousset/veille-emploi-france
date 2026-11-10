@@ -80,7 +80,7 @@ dump("data.json", {
 })
 
 
-# --- ROME, tech et tension (API France Travail) : on exécute main() des prototypes sur les fixtures ----------
+# --- ROME, tech, tension et carte (API France Travail) : on exécute main() des prototypes sur les fixtures ----------
 import builtins, io, sys, tempfile
 
 FT_FIX = os.path.join(FIXROOT, "ft")
@@ -122,7 +122,10 @@ def ft_call(path, body=None, tries=5):
         prefix, nomenclature = FT_BY_PATH[path]
         if body["codeTypeNomenclature"] != nomenclature:
             raise SystemExit("nomenclature inattendue pour " + path + " : " + body["codeTypeNomenclature"])
-        fname = prefix + "_" + body["codeActivite"] + ".json"
+        if body["codeTypeTerritoire"] == "DEP":  # collecteur `carte` : une fixture par métier et département
+            fname = "carte_" + prefix + "_" + body["codeActivite"] + "_" + body["codeTerritoire"] + ".json"
+        else:
+            fname = prefix + "_" + body["codeActivite"] + ".json"
     full = os.path.join(FT_FIX, fname)
     if not os.path.exists(full):
         return None  # comme un 404 de l'API
@@ -137,9 +140,10 @@ class FixedDate2:
         return datetime.date(2026, 11, 9)
 
 
-def run_main_on_fixtures(mod, out_name, prefix, seed_files=None):
+def run_main_on_fixtures(mod, out_name, prefix, seed_files=None, setup=None):
     """Exécute mod.main() avec HERE pointant vers un dossier temporaire (jamais le data/ du dépôt).
-    `seed_files` : {nom: texte} déposés dans le data/ temporaire avant l'exécution (entrées du module)."""
+    `seed_files` : {nom: texte} déposés dans le data/ temporaire avant l'exécution (entrées du module) ;
+    `setup(mod, tmp)` : réglages du module qui dépendent du dossier temporaire (ex. son fichier de reprise)."""
     with tempfile.TemporaryDirectory() as tmp:
         os.makedirs(os.path.join(tmp, "data"))
         for name, text in (seed_files or {}).items():
@@ -147,6 +151,8 @@ def run_main_on_fixtures(mod, out_name, prefix, seed_files=None):
                 f.write(text)
         mod.HERE = tmp
         mod.date = FixedDate2
+        if setup:
+            setup(mod, tmp)
         mod.main()
         with open(os.path.join(tmp, "data", out_name), encoding="utf-8") as f:
             text = f.read()
@@ -172,3 +178,22 @@ top_codes_full = tn.top_codes
 tn.top_codes = lambda rome, n=2: top_codes_full(rome, n)
 dump("tension_top2.json", run_main_on_fixtures(tn, "tension.js", "window.TENSION=", {"rome.js": rome_js}))
 tn.top_codes = top_codes_full
+
+# fetch_carte.main() : mêmes entrées que le serveur (rome.js du jeu de référence rome), N et DEPS réduits par
+# assignation du module (les valeurs de production sont 100 métiers x 96 départements), fichier de reprise
+# (CACHE) détourné vers le dossier temporaire : le data/ du dépôt (carte_cache.json, carte.js) n'est jamais lu
+# ni écrit. N vaut 2 (plus EXTRA_CODES réduit, voir ci-dessous) ; les départements gardent l'ordre de la liste de
+# production (2A entre 19 et 21). `top_codes` a `n=N` en valeur par défaut figée à la définition : on la
+# redéfinit comme pour la tension. Date figée au 2026-11-09 (FixedDate2).
+cm = load_module_without_env("fetch_carte")
+CARTE_N = 2  # K1303 et M1805 : A1401 (3e en volume) n'entre que par EXTRA_CODES
+cm.N = CARTE_N
+# métiers ajoutés hors top N : A1401 (présent dans rome.js, hors du top réduit : ajouté), K1303 (déjà dans le
+# top : pas de doublon), ZZ999 (absent de rome.js : ignoré)
+cm.EXTRA_CODES = ["A1401", "K1303", "ZZ999"]
+cm.DEPS = ["2A", "48", "75", "90"]
+carte_top_codes_full = cm.top_codes
+cm.top_codes = lambda rome, n=CARTE_N: carte_top_codes_full(rome, n)
+dump("carte.json", run_main_on_fixtures(
+    cm, "carte.js", "window.CARTE=", {"rome.js": rome_js},
+    setup=lambda mod, tmp: setattr(mod, "CACHE", os.path.join(tmp, "data", "carte_cache.json"))))

@@ -27,53 +27,63 @@ pub const TOP_N: usize = 300;
 /// Part maximale (exclusive) de codes en échec tolérée : 1/10 = 10 % (comme `rome`).
 const MAX_FAILURE_RATIO: (usize, usize) = (1, 10);
 
-fn format_error(detail: &str) -> CollectError {
-    CollectError::Parse(ParseError::Format(format!("tension : {detail}")))
+fn format_error(label: &str, detail: &str) -> CollectError {
+    CollectError::Parse(ParseError::Format(format!("{label} : {detail}")))
 }
 
-/// Contenu de `rome.js` (déjà collecté) lu par le `Store`.
-fn read_rome(store: &Store) -> Result<Value, CollectError> {
+/// Contenu de `rome.js` (déjà collecté) lu par le `Store`. `label` nomme le collecteur dans les
+/// messages (`tension`, `carte`).
+pub(super) fn read_rome(store: &Store, label: &str) -> Result<Value, CollectError> {
     let bytes = store.read("rome.js").map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            CollectError::Fetch(
-                "tension : rome.js absent (la collecte rome doit avoir réussi avant)".into(),
-            )
+            CollectError::Fetch(format!(
+                "{label} : rome.js absent (la collecte rome doit avoir réussi avant)"
+            ))
         } else {
-            CollectError::Fetch(format!("tension : rome.js illisible ({})", e.kind()))
+            CollectError::Fetch(format!("{label} : rome.js illisible ({})", e.kind()))
         }
     })?;
-    let text =
-        String::from_utf8(bytes).map_err(|_| format_error("rome.js n'est pas de l'UTF-8"))?;
+    let text = String::from_utf8(bytes)
+        .map_err(|_| format_error(label, "rome.js n'est pas de l'UTF-8"))?;
     let inner = text
         .trim()
         .strip_prefix("window.ROME=")
-        .ok_or_else(|| format_error("rome.js n'a pas la forme « window.ROME=… »"))?;
+        .ok_or_else(|| format_error(label, "rome.js n'a pas la forme « window.ROME=… »"))?;
     let inner = inner.strip_suffix(';').unwrap_or(inner);
-    serde_json::from_str(inner).map_err(|_| format_error("rome.js : JSON illisible"))
+    serde_json::from_str(inner).map_err(|_| format_error(label, "rome.js : JSON illisible"))
 }
 
 /// Les `n` codes au plus gros cumul d'offres sur les 4 derniers trimestres (valeurs nulles = 0) ;
 /// égalité : ordre du code (comme `top_codes` du Python).
 pub fn top_codes(rome: &Value, n: usize) -> Result<Vec<String>, CollectError> {
+    top_codes_for(rome, n, "tension")
+}
+
+/// Comme `top_codes`, les messages d'erreur portant le nom `label` du collecteur.
+pub(super) fn top_codes_for(
+    rome: &Value,
+    n: usize,
+    label: &str,
+) -> Result<Vec<String>, CollectError> {
     let items = rome
         .get("items")
         .and_then(Value::as_object)
-        .ok_or_else(|| format_error("rome.js : champ « items » absent"))?;
+        .ok_or_else(|| format_error(label, "rome.js : champ « items » absent"))?;
     let mut vol: Vec<(&str, f64)> = Vec::with_capacity(items.len());
     for (code, item) in items {
-        let offers = item
-            .get("o")
-            .and_then(Value::as_array)
-            .ok_or_else(|| format_error(&format!("rome.js : métier {code} sans série « o »")))?;
+        let offers = item.get("o").and_then(Value::as_array).ok_or_else(|| {
+            format_error(label, &format!("rome.js : métier {code} sans série « o »"))
+        })?;
         let mut total = 0.0;
         for x in &offers[offers.len().saturating_sub(4)..] {
             match x {
                 Value::Null => {}
                 Value::Number(v) => total += v.as_f64().unwrap_or(0.0),
                 _ => {
-                    return Err(format_error(&format!(
-                        "rome.js : métier {code} avec une valeur non numérique"
-                    )))
+                    return Err(format_error(
+                        label,
+                        &format!("rome.js : métier {code} avec une valeur non numérique"),
+                    ))
                 }
             }
         }
@@ -139,9 +149,9 @@ pub async fn run_with<C: StatApi>(
     n: usize,
     workers: usize,
 ) -> Result<(), CollectError> {
-    let codes = top_codes(&read_rome(store)?, n)?;
+    let codes = top_codes(&read_rome(store, "tension")?, n)?;
     if codes.is_empty() {
-        return Err(format_error("rome.js ne contient aucun métier"));
+        return Err(format_error("tension", "rome.js ne contient aucun métier"));
     }
     let fetched: Vec<(&str, Result<Value, CollectError>)> = stream::iter(&codes)
         .map(|code| async move { (code.as_str(), fetch_code(client, code).await) })

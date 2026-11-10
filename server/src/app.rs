@@ -93,6 +93,7 @@ pub fn seed_times_from_files(store: &Store, now: DateTime<Utc>) -> SeedTimes {
         (Job::Core, &["data.js"][..]),
         (Job::Rome, &["rome.js"][..]),
         (Job::Tech, &["tech.js", "tension.js"][..]),
+        (Job::Carte, &["carte.js"][..]),
     ] {
         let modified: Option<Vec<_>> = files.iter().map(|f| store.modified(f)).collect();
         if let Some(oldest) = modified.and_then(|m| m.into_iter().min()) {
@@ -166,10 +167,10 @@ pub fn startup_lines(cfg: &Config) -> Vec<String> {
             "planificateur désactivé (VE_DISABLE_SCHEDULER) : aucune collecte automatique".into(),
         );
     } else if cfg.ft.is_some() {
-        v.push("collecteurs actifs : core, rome, tech".into());
+        v.push("collecteurs actifs : core, rome, tech, carte".into());
     } else {
         v.push("collecteurs actifs : core".into());
-        v.push("identifiants France Travail absents : rome et tech désactivés".into());
+        v.push("identifiants France Travail absents : rome, tech et carte désactivés".into());
     }
     v
 }
@@ -305,12 +306,12 @@ mod tests {
         let text = startup_lines(&cfg).join("\n");
         assert!(text.contains("127.0.0.1:3210") && text.contains("collecteurs actifs : core"));
         assert!(
-            text.contains("absents") && text.contains("rome et tech désactivés"),
+            text.contains("absents") && text.contains("rome, tech et carte désactivés"),
             "{text}"
         );
         cfg.ft = Some(creds());
         let text = startup_lines(&cfg).join("\n");
-        assert!(text.contains("core, rome, tech"), "{text}");
+        assert!(text.contains("core, rome, tech, carte"), "{text}");
         assert!(
             !text.contains(SECRET) && !text.contains(CLIENT_ID),
             "{text}"
@@ -384,6 +385,22 @@ mod tests {
         assert_eq!(seed_times_from_files(&store, now).get("tech"), Some(&old));
         set_mtime(dir.path(), "tech.js", now.into());
         assert_eq!(seed_times_from_files(&store, now).get("tech"), Some(&now));
+    }
+
+    #[test]
+    fn carte_seed_is_the_mtime_of_carte_js_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path());
+        let now = now_secs();
+        // absent : pas de date (collecte due dans 30 s si rome.js existe)
+        set_mtime(dir.path(), "rome.js", now.into());
+        assert!(!seed_times_from_files(&store, now).contains_key("carte"));
+        // présent : sa date de modification, indépendante de celle de rome.js
+        let old = now - chrono::Duration::days(40);
+        set_mtime(dir.path(), "carte.js", old.into());
+        let seed = seed_times_from_files(&store, now);
+        assert_eq!(seed.get("carte"), Some(&old));
+        assert_eq!(seed.get("rome"), Some(&now));
     }
 
     #[test]

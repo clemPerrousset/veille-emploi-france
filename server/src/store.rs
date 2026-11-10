@@ -8,11 +8,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// Rend unique le nom du fichier temporaire pour chaque appel du processus.
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-pub const DATA_FILES: [(&str, &str); 6] = [
+pub const DATA_FILES: [(&str, &str); 7] = [
     ("data.js", "DATA"),
     ("rome.js", "ROME"),
     ("tech.js", "TECH"),
     ("tension.js", "TENSION"),
+    ("carte.js", "CARTE"),
     ("ai_exposure.js", "AI"),
     ("ai_rome.js", "AIROME"),
 ];

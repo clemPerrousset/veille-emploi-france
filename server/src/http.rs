@@ -24,13 +24,16 @@ const SECURITY_HEADERS: [(&str, &str); 4] = [
     ("x-frame-options", "DENY"),
 ];
 
-/// Seuls ces quatre fichiers du dépôt sont embarqués (jamais `.env`, `server/`, `data/`).
+/// Seuls ces cinq fichiers du dépôt sont embarqués (jamais `.env`, `server/`, ni d'autre fichier de
+/// `data/` : les fichiers collectés vivent dans le dossier de données). `data/france.js` (contours des
+/// départements de la carte) est statique : servi à `/data/france.js` depuis le binaire.
 #[derive(RustEmbed)]
 #[folder = ".."]
 #[include = "index.html"]
 #[include = "app.js"]
 #[include = "style.css"]
 #[include = "vendor/chart.umd.min.js"]
+#[include = "data/france.js"]
 struct Assets;
 
 #[derive(Clone)]
@@ -49,6 +52,7 @@ pub fn router(state: AppState) -> Router {
             "/vendor/chart.umd.min.js",
             get(|| asset("vendor/chart.umd.min.js", JS)),
         )
+        .route("/data/france.js", get(|| asset("data/france.js", JS)))
         .route("/data/{name}", get(data_file))
         .route("/health", get(health))
         .fallback(|| async { StatusCode::NOT_FOUND })
@@ -112,12 +116,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_assets_are_exactly_the_four_public_files() {
+    fn embedded_assets_are_exactly_the_five_public_files() {
         let mut names: Vec<String> = Assets::iter().map(|n| n.to_string()).collect();
         names.sort();
         assert_eq!(
             names,
-            ["app.js", "index.html", "style.css", "vendor/chart.umd.min.js"]
+            [
+                "app.js",
+                "data/france.js",
+                "index.html",
+                "style.css",
+                "vendor/chart.umd.min.js"
+            ]
         );
     }
 }

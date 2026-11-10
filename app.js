@@ -175,8 +175,9 @@
     { id: "romeTech", label: "Tech : tableau de bord", title: "Métiers du numérique (ROME)", rome: true, tech: true },
     { id: "mine", label: "Métiers précis", title: "Mes métiers" }
   ].filter(function (v) { return (!v.rome || ROME_KEYS.length) && (!v.tech || TECH_CODES.length) && (!v.ai || AIR) && (!v.hire || HIRE.length); });
-  var state = { view: "global", period: 365, custom: "", rebase: "window", macro: [], mine: ["c:Software Development"], techMetric: "off", rankMode: "rel" };
+  var state = { view: "global", period: 365, custom: "", rebase: "window", macro: [], mine: ["c:Software Development"], techMetric: "off", rankMode: "rel", screen: "main", mapCode: "", mapMetric: "off" };
   try { var sv = JSON.parse(localStorage.getItem("veille-emploi") || "null"); if (sv) Object.keys(state).forEach(function (k) { if (sv[k] !== undefined) state[k] = sv[k]; }); } catch (e) {}
+  state.screen = "main"; // on arrive toujours sur les courbes
   if (!VIEWS.some(function (v) { return v.id === state.view; })) state.view = "global";
   state.mine = state.mine.filter(function (k) { return ITEMS[k]; });
   function save() { try { localStorage.setItem("veille-emploi", JSON.stringify(state)); } catch (e) {} }
@@ -553,6 +554,129 @@
   canvas.addEventListener("touchmove", hover, { passive: true });
   canvas.addEventListener("mouseleave", function () { cursorX = null; if (chart) chart.draw(); });
 
+
+  /* ---------- carte de France : offres et demandeurs par département (fetch_carte.py, france.js) ---------- */
+  var CARTE = window.CARTE || null, FR = window.FRANCE || null, MAPCODES = [], MAPTOT = null;
+  if (CARTE && FR && R) {
+    MAPCODES = Object.keys(CARTE.items).filter(function (c) { return R.items[c]; });
+    MAPTOT = CARTE.deps.map(function (_, i) { return MAPCODES.reduce(function (s, c) { return s + (CARTE.items[c].o[i] || 0); }, 0); });
+  }
+  var MAP_MIN_OFFRES = 50; // en dessous, le rapport demandeurs / offres n'est que du bruit (offres arrondies à la dizaine)
+  var MAP_PALETTE = ["#fee2e2", "#fca5a5", "#ef4444", "#b91c1c", "#7f1d1d"]; // rouge : plus c'est foncé, plus la valeur est forte
+  var MAP_METRICS = [
+    ["off", "Nombre d'offres", "Offres enregistrées sur 4 trimestres. Les grands départements dominent mécaniquement : cette carte montre où se trouvent les offres, pas où le métier est le plus recherché."],
+    ["conc", "Concentration", "Part de ce métier dans les offres du département, comparée à la moyenne nationale. 2 = deux fois plus d'offres qu'ailleurs, à taille égale : la carte montre où ce métier est le plus recherché."],
+    ["dem", "Demandeurs pour 100 offres", "Demandeurs inscrits (catégorie A) pour 100 offres. Plus c'est bas, plus il est facile de trouver ; plus c'est haut, plus c'est difficile. Départements de moins de " + MAP_MIN_OFFRES + " offres : non calculé."]
+  ];
+  function mapValues(code, metric) {
+    var it = CARTE.items[code], n = CARTE.deps.length, out = [], i;
+    if (metric === "off") { for (i = 0; i < n; i++) out.push(it.o[i]); return out; }
+    if (metric === "dem") { for (i = 0; i < n; i++) out.push(it.o[i] != null && it.o[i] >= MAP_MIN_OFFRES && it.d[i] != null ? it.d[i] / it.o[i] * 100 : null); return out; }
+    var O = it.o.reduce(function (s, v) { return s + (v || 0); }, 0), T = MAPTOT.reduce(function (s, v) { return s + v; }, 0);
+    for (i = 0; i < n; i++) out.push(it.o[i] != null && MAPTOT[i] > 0 && O > 0 ? (it.o[i] / MAPTOT[i]) / (O / T) : null);
+    return out;
+  }
+  function mapFmt(metric, v) { return v == null ? "n/d" : (metric === "conc" ? nf1.format(v) : nf0.format(v)); }
+  function mapBreaks(vals) { // 4 seuils (quintiles) sur les valeurs connues
+    var a = vals.filter(function (v) { return v != null; }).sort(function (x, y) { return x - y; });
+    return [0.2, 0.4, 0.6, 0.8].map(function (q) { return a.length ? a[Math.min(a.length - 1, Math.floor(q * a.length))] : 0; });
+  }
+  function mapClass(v, br) { var k = 0; br.forEach(function (b) { if (v >= b) k++; }); return k; }
+  var mapBuilt = false;
+  function buildMapSvg() {
+    var svg = $("#mapsvg"), NS = "http://www.w3.org/2000/svg";
+    svg.setAttribute("viewBox", "0 0 " + FR.w + " " + FR.h);
+    svg.innerHTML = "";
+    FR.deps.forEach(function (d) {
+      var p = document.createElementNS(NS, "path"); p.setAttribute("d", d.d); p.setAttribute("data-c", d.c);
+      var t = document.createElementNS(NS, "title"); t.textContent = d.n + " (" + d.c + ")"; p.appendChild(t);
+      svg.appendChild(p);
+    });
+    function show(e) { var c = e.target && e.target.getAttribute && e.target.getAttribute("data-c"); if (c) mapRead(c); }
+    svg.addEventListener("mouseover", show); svg.addEventListener("click", show); svg.addEventListener("touchstart", show, { passive: true });
+    mapBuilt = true;
+  }
+  function mapRead(c) {
+    var i = CARTE.deps.indexOf(c), d = FR.deps.filter(function (x) { return x.c === c; })[0], code = state.mapCode;
+    if (i < 0 || !d) return;
+    var it = CARTE.items[code];
+    var bits = ["offres : " + mapFmt("off", it.o[i]), "demandeurs : " + (it.d[i] == null ? "n/d" : nf0.format(it.d[i])),
+      "demandeurs pour 100 offres : " + mapFmt("dem", mapValues(code, "dem")[i]), "concentration : " + mapFmt("conc", mapValues(code, "conc")[i])];
+    $("#mapread").textContent = d.n + " (" + c + ") : " + bits.join(" · ") + ".";
+  }
+  function renderMap() {
+    if (!MAPCODES.length) return;
+    if (MAPCODES.indexOf(state.mapCode) < 0) state.mapCode = MAPCODES[0];
+    if (!MAP_METRICS.some(function (m) { return m[0] === state.mapMetric; })) state.mapMetric = "off";
+    if (!mapBuilt) buildMapSvg();
+    var code = state.mapCode, metric = state.mapMetric, vals = mapValues(code, metric), br = mapBreaks(vals);
+    $("#mapq").value = code;
+    var mEl = $("#mapmetrics"); mEl.innerHTML = "";
+    MAP_METRICS.forEach(function (m) { mEl.appendChild(chip(m[1], metric === m[0], function () { state.mapMetric = m[0]; renderMap(); save(); })); });
+    $("#mapmetrichint").textContent = MAP_METRICS.filter(function (m) { return m[0] === metric; })[0][2];
+    var paths = $("#mapsvg").querySelectorAll("path");
+    Array.prototype.forEach.call(paths, function (p) {
+      var i = CARTE.deps.indexOf(p.getAttribute("data-c")), v = i >= 0 ? vals[i] : null;
+      p.style.fill = v == null ? "var(--line)" : MAP_PALETTE[mapClass(v, br)];
+    });
+    var lg = $("#maplegend"); lg.innerHTML = "";
+    var cap = document.createElement("span"); cap.className = "lgcap";
+    cap.textContent = metric === "conc" ? "Plus c'est foncé, plus la concentration est forte." : (metric === "off" ? "Plus c'est foncé, plus il y a d'offres." : "Plus c'est foncé, plus il y a de demandeurs pour 100 offres (donc plus difficile).");
+    lg.appendChild(cap);
+    var known = vals.filter(function (v) { return v != null; });
+    var lo = Math.min.apply(null, known), hi = Math.max.apply(null, known);
+    var edges = [lo].concat(br).concat([hi]);
+    MAP_PALETTE.forEach(function (c, k) {
+      var sp = document.createElement("span"); sp.className = "lg";
+      var sw = document.createElement("i"); sw.style.background = c; sp.appendChild(sw);
+      sp.appendChild(document.createTextNode(mapFmt(metric, edges[k]) + " – " + mapFmt(metric, edges[k + 1]))); lg.appendChild(sp);
+    });
+    var none = document.createElement("span"); none.className = "lg"; var nw = document.createElement("i"); nw.style.background = "var(--line)"; none.appendChild(nw); none.appendChild(document.createTextNode("non calculé")); lg.appendChild(none);
+    // classements : cinq départements en haut, cinq en bas
+    var ranked = CARTE.deps.map(function (c, i) { return { c: c, v: vals[i] }; }).filter(function (x) { return x.v != null; }).sort(function (a, b) { return b.v - a.v; });
+    var nameOf = function (c) { return FR.deps.filter(function (x) { return x.c === c; })[0].n; };
+    var box = $("#maplists"); box.innerHTML = "";
+    function list(title, rows) {
+      var h = document.createElement("div"); h.className = "lbl"; h.textContent = title; h.style.margin = "10px 0 4px"; box.appendChild(h);
+      var ol = document.createElement("ol"); ol.className = "maprank";
+      rows.forEach(function (x) { var li = document.createElement("li"); li.textContent = nameOf(x.c) + " (" + x.c + ") : " + mapFmt(metric, x.v); ol.appendChild(li); });
+      box.appendChild(ol);
+    }
+    var top = ranked.slice(0, 5), bottom = ranked.slice(-5).reverse();
+    if (metric === "dem") { list("Le plus facile de trouver (peu de demandeurs)", bottom); list("Le plus difficile de trouver (beaucoup de demandeurs)", top); }
+    else { list(metric === "conc" ? "Où ce métier est le plus recherché" : "Où il y a le plus d'offres", top); list(metric === "conc" ? "Où il est le moins recherché" : "Où il y a le moins d'offres", bottom); }
+    var q = CARTE.quarter ? "T" + CARTE.quarter.slice(5) + " " + CARTE.quarter.slice(0, 4) : "dernier trimestre";
+    $("#mapnote").textContent = "France métropolitaine, " + R.items[code].l + ". Offres enregistrées sur les 4 derniers trimestres (France Travail, arrondies à la dizaine ; une offre enregistrée n'est pas un poste vacant) ; demandeurs inscrits en catégorie A à fin " + q + ". La concentration compare chaque département à la taille de son marché, estimée par la somme des offres des " + MAPCODES.length + " métiers disponibles. Seuls les " + MAPCODES.length + " métiers qui ont le plus d'offres sont affichés. Ce n'est pas un conseil de mobilité : un département peu actif peut recruter fort pour un métier précis.";
+    $("#mapread").textContent = "Survole ou touche un département pour lire ses valeurs.";
+  }
+  function setScreen(sc) {
+    state.screen = sc;
+    $("#mainscreen").hidden = sc !== "main"; $("#mapscreen").hidden = sc !== "map";
+    $("#mapbtn").textContent = sc === "map" ? "← Retour aux courbes" : "Carte de France";
+    $("#mapbtn").setAttribute("aria-pressed", sc === "map" ? "true" : "false");
+    if (sc === "map") renderMap(); else render();
+    window.scrollTo(0, 0);
+  }
+  function initMap() {
+    if (!MAPCODES.length) return;
+    $("#mapbtn").hidden = false;
+    $("#mapbtn").addEventListener("click", function () { setScreen(state.screen === "map" ? "main" : "map"); });
+    // liste à choix unique : les métiers du bloc tech d'abord, puis tous les autres par ordre alphabétique
+    var sel = $("#mapq"); sel.innerHTML = "";
+    function group(title, codes) {
+      if (!codes.length) return;
+      var og = document.createElement("optgroup"); og.label = title;
+      codes.slice().sort(function (a, b) { return R.items[a].l.localeCompare(R.items[b].l, "fr"); }).forEach(function (c) {
+        var o = document.createElement("option"); o.value = c; o.textContent = R.items[c].l; og.appendChild(o);
+      });
+      sel.appendChild(og);
+    }
+    var techCodes = MAPCODES.filter(function (c) { return TECH_CODES.indexOf(c) >= 0; });
+    group("Métiers du numérique", techCodes);
+    group(techCodes.length ? "Autres métiers" : "Métiers", MAPCODES.filter(function (c) { return techCodes.indexOf(c) < 0; }));
+    sel.addEventListener("change", function (e) { if (MAPCODES.indexOf(e.target.value) >= 0) { state.mapCode = e.target.value; renderMap(); save(); } });
+  }
+
   /* ---------- contrôles ---------- */
   /* navigation à deux niveaux : thème > vue, avec un interrupteur de détail pour les vues qui existent en deux versions */
   var NAV = [
@@ -677,6 +801,7 @@
     var collectes = " Dernières collectes : Indeed/Eurostat/DARES " + dateFr(ms(D.updated), true);
     if (window.ROME && window.ROME.updated) collectes += ", France Travail (métiers) " + dateFr(ms(window.ROME.updated), true);
     if (window.TECH && window.TECH.updated) collectes += ", France Travail (tech) " + dateFr(ms(window.TECH.updated), true);
+    if (window.CARTE && window.CARTE.updated) collectes += ", France Travail (carte) " + dateFr(ms(window.CARTE.updated), true);
     if (window.TENSION && window.TENSION.updated) collectes += ", France Travail (tension) " + dateFr(ms(window.TENSION.updated), true);
     $("#updated").textContent += collectes + ".";
   } catch (e) { /* ROME absent ou date illisible : on garde le texte de base */ }
@@ -687,6 +812,7 @@
     if (!state.macro.length) $("#opts").open = false;
     $("#minebox details").open = false; // la liste de 34 métiers occuperait tout l'écran
   }
+  initMap();
   buildControls();
   render();
 })();

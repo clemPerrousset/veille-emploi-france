@@ -9,9 +9,16 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>Veille emploi France</h1>
-    <p>Offres d'emploi, exposition à l'IA et indicateurs macro, sur une même échelle de temps.</p>
+    <div class="hrow">
+      <div>
+        <h1>Veille emploi France</h1>
+        <p>Offres d'emploi, exposition à l'IA et indicateurs macro, sur une même échelle de temps.</p>
+      </div>
+      <button id="mapbtn" class="chip tab" type="button" aria-pressed="false" hidden>Carte de France</button>
+    </div>
   </header>
+
+  <div id="mainscreen">
 
   <div class="card">
     <div class="step"><span class="lbl">1 · Que veux-tu voir ?</span><div class="views" id="groups" role="group" aria-label="Choix du thème"></div></div>
@@ -74,6 +81,29 @@
     <p id="hirenote" style="font-size:12px;color:var(--muted);margin:8px 0 0"></p>
   </div>
 
+  </div>
+
+  <div id="mapscreen" hidden>
+    <div class="card">
+      <h2 class="maph">Carte de France : où l'emploi est actif, métier par métier</h2>
+      <p class="hint" style="margin-top:0">Choisis un métier dans la liste (un seul à la fois) : chaque département est coloré selon le nombre d'offres, la concentration du métier ou le nombre de demandeurs.</p>
+      <div class="row">
+        <label class="grp"><span class="lbl">Métier</span><select id="mapq" class="mapq" aria-label="Choisir un métier"></select></label>
+      </div>
+      <div class="grp" style="margin-top:10px"><span class="lbl">Colorier selon</span><span id="mapmetrics" class="grp" role="group" aria-label="Mesure affichée sur la carte"></span></div>
+      <p class="hint" id="mapmetrichint" style="margin-top:6px"></p>
+    </div>
+    <div class="card mapgrid">
+      <div class="mapbox">
+        <svg id="mapsvg" role="img" aria-label="Carte des départements de France métropolitaine"></svg>
+        <div class="legend" id="maplegend"></div>
+        <div class="readout" id="mapread"></div>
+      </div>
+      <div id="maplists"></div>
+    </div>
+    <div class="card"><p id="mapnote" style="font-size:12px;color:var(--muted);margin:0"></p></div>
+  </div>
+
   <div class="card">
     <footer>
       <details>
@@ -85,6 +115,7 @@
           <li><b>Métiers précis (ROME)</b> : <a href="https://francetravail.io/produits-partages/catalogue/marche-travail">API Marché du travail</a> de France Travail (source : France Travail, API Marché du travail, Licence Ouverte Etalab), offres enregistrées par trimestre et par métier (« toutes offres », France entière, arrondies à la dizaine). Ce sont des flux trimestriels, pas un stock d'offres ouvertes. Pour éviter la saisonnalité, l'outil affiche le cumul sur 4 trimestres glissants (la courbe réagit donc avec un décalage) et remplace les pics isolés (au moins 3 fois la médiane des mêmes trimestres des autres années) par cette médiane. Ce nettoyage est le mien : les données brutes contiennent de tels pics, par exemple fin 2024. Les ordres de grandeur ne sont pas comparables à l'index Indeed, mais les tendances le sont.</li>
           <li><b>Tableau de bord tech</b> : même API France Travail : demandeurs d'emploi inscrits en catégorie A (stock à fin de trimestre), embauches (cumul sur 4 trimestres, publiées avec un retard de plusieurs trimestres) et indicateur annuel de tension de 1 à 5. Les 18 métiers du numérique sont ma sélection de codes ROME, modifiable dans <code>fetch_tech.py</code>. Les licenciements tech (layoffhedge) ne sont pas intégrés : le jeu de données ne couvre que 2026 et surtout de grandes entreprises mondiales.</li>
           <li><b>Où ça recrute</b> : même API France Travail, pour les 300 métiers qui ont le plus d'offres : indicateur annuel de tension (de 1 à 5) et demandeurs d'emploi inscrits en catégorie A. Le rapport demandeurs / offres est calculé par ce site (stock de demandeurs rapporté à un cumul d'offres sur un an) : il sert à comparer les métiers entre eux, pas à compter des postes. Sélection modifiable dans <code>fetch_tension.py</code>.</li>
+          <li><b>Carte de France</b> : mêmes offres et demandeurs France Travail, département par département, pour les 100 métiers qui ont le plus d'offres. Contours : <a href="https://github.com/gregoiredavid/france-geojson">france-geojson</a>, dérivés d'IGN Admin Express (Licence Ouverte Etalab 2.0), simplifiés. Collecte : <code>fetch_carte.py</code>.</li>
           <li><b>Exposition à l'IA par métier précis</b> : estimation d'un modèle de langage (Claude) à partir de l'intitulé de chaque métier ROME, pour les métiers les plus fréquents (environ 94 % des offres), sur une échelle de 0 à 100 (part des tâches que l'IA générative peut réaliser ou assister). Méthode inspirée de l'<a href="https://heclift.github.io/website/files/papers/LIFT_WP_2026-02.pdf">indice de la Banque de France et de HEC (LIFT WP 2026-02, CC BY 4.0)</a>, dont les scores par métier ne sont pas publiés. C'est une capacité technique potentielle, pas un usage réel ni une prévision d'emplois supprimés.</li>
           <li><b>Exposition à l'IA</b> : <b>estimation personnelle</b> par catégorie, inspirée des travaux publics (OIT, Anthropic Economic Index, Eloundou et al.), pas leurs scores. À remplacer par un rapprochement officiel.</li>
           <li><b>Secteurs</b> : moyenne simple des catégories Indeed d'un même groupe, sans pondération par le nombre d'emplois.</li>
@@ -103,6 +134,8 @@
 <script src="data/tech.js"></script>
 <script src="data/tension.js"></script>
 <script src="data/ai_rome.js"></script>
+<script src="data/carte.js"></script>
+<script src="data/france.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

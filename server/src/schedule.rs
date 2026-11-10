@@ -11,9 +11,12 @@
 //! - un échec est consigné (`StatusBoard::record_err`) et seul le job en échec est retenté :
 //!   `core` après `RETRY_AFTER_FAILURE_SECS` (1 h, collecte peu coûteuse) ; France Travail
 //!   (~1 900 appels) avec un délai croissant `FT_RETRY_LADDER_SECS` (1 h, 6 h, 24 h), jamais
-//!   au-delà du créneau hebdomadaire suivant, remis à zéro après un succès.
+//!   au-delà du créneau hebdomadaire suivant, remis à zéro après un succès ;
+//! - `carte` (~19 200 appels, une heure) a sa propre boucle (`carte_loop`) : lundi 04:00 UTC, seulement
+//!   si `carte.js` est absent ou vieux de plus de 28 jours (la donnée est trimestrielle), et jamais en
+//!   même temps que `rome` ou `tech` (`FtGate`) pour ménager le quota de l'API.
 
-use crate::collect::{core as core_collect, rome, tech, CollectError};
+use crate::collect::{carte, core as core_collect, rome, tech, CollectError};
 use crate::config::Config;
 use crate::status::StatusBoard;
 use crate::store::Store;
@@ -31,6 +34,11 @@ pub const RETRY_AFTER_FAILURE_SECS: i64 = 3600;
 /// Délais avant de retenter France Travail après 1, 2, 3 échecs consécutifs (le dernier vaut
 /// pour les suivants) : l'API n'est interrogée qu'au plus une fois par semaine en régime normal.
 pub const FT_RETRY_LADDER_SECS: [i64; 3] = [3600, 6 * 3600, 24 * 3600];
+/// Âge à partir duquel `carte.js` est renouvelé (strictement plus de 28 jours) : la donnée de France
+/// Travail est trimestrielle et la collecte est lourde.
+pub const CARTE_MAX_AGE_DAYS: i64 = 28;
+/// Quand `carte` est dû mais que `rome.js` manque encore : nouvelle vérification (peu coûteuse) après ce délai.
+pub const CARTE_RECHECK_SECS: i64 = 3600;
 /// Une attente longue est découpée en tranches de cette durée, puis l'heure murale est relue :
 /// une mise en veille de la machine ne retarde donc pas la collecte de plus de ce délai.
 pub const MAX_SLEEP_SECS: u64 = 900;
@@ -41,6 +49,13 @@ pub const CORE_EVERY: Every = Every::DailyAt { hour: 2, min: 30 };
 pub const FT_EVERY: Every = Every::WeeklyAt {
     weekday: Weekday::Mon,
     hour: 3,
+    min: 0,
+};
+
+/// Boucle `carte` : le lundi à 04:00 UTC, une heure après le job France Travail (`rome` puis `tech`).
+pub const CARTE_EVERY: Every = Every::WeeklyAt {
+    weekday: Weekday::Mon,
+    hour: 4,
     min: 0,
 };
 
@@ -143,6 +158,7 @@ pub enum Job {
     Core,
     Rome,
     Tech,
+    Carte,
 }
 
 impl Job {
@@ -152,6 +168,7 @@ impl Job {
             Job::Core => "core",
             Job::Rome => "rome",
             Job::Tech => "tech",
+            Job::Carte => "carte",
         }
     }
 }
@@ -162,9 +179,9 @@ pub enum Command {
     Once(Job),
 }
 
-pub const USAGE: &str = "Usage : veille_emploi [serve | once core|rome|tech]";
+pub const USAGE: &str = "Usage : veille_emploi [serve | once core|rome|tech|carte]";
 
-/// `serve` par défaut ; `once core|rome|tech`.
+/// `serve` par défaut ; `once core|rome|tech|carte`.
 pub fn parse_args(args: &[String]) -> Result<Command, String> {
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
     match a.as_slice() {
@@ -172,6 +189,7 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
         ["once", "core"] => Ok(Command::Once(Job::Core)),
         ["once", "rome"] => Ok(Command::Once(Job::Rome)),
         ["once", "tech"] => Ok(Command::Once(Job::Tech)),
+        ["once", "carte"] => Ok(Command::Once(Job::Carte)),
         ["once", other] => Err(format!("collecte inconnue « {other} ». {USAGE}")),
         ["once"] => Err(format!("collecte manquante. {USAGE}")),
         _ => Err(format!("arguments non reconnus. {USAGE}")),
@@ -185,6 +203,12 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
 /// donc sur la tâche qui les attend, sans `tokio::spawn`.
 pub trait Runner: 'static {
     fn run(&self, job: Job) -> impl Future<Output = Result<(), CollectError>>;
+
+    /// Le job a-t-il ce qu'il lui faut pour tourner ? (`carte` a besoin de `rome.js`.) Vérifié par le
+    /// planificateur avant de lancer une collecte DUE : sinon rien n'est lancé, sans erreur consignée.
+    fn can_run(&self, _job: Job) -> bool {
+        true
+    }
 }
 
 /// Heure murale (injectable pour les tests).
@@ -214,6 +238,13 @@ pub struct Ctx {
 }
 
 impl Runner for Ctx {
+    fn can_run(&self, job: Job) -> bool {
+        match job {
+            Job::Carte => self.store.modified("rome.js").is_some(),
+            _ => true,
+        }
+    }
+
     async fn run(&self, job: Job) -> Result<(), CollectError> {
         let today = Utc::now().date_naive();
         match job {
@@ -226,14 +257,14 @@ impl Runner for Ctx {
                 )
                 .await
             }
-            Job::Rome | Job::Tech => {
+            Job::Rome | Job::Tech | Job::Carte => {
                 let ft = self.ft.as_ref().ok_or_else(|| {
                     CollectError::Fetch("identifiants France Travail absents".into())
                 })?;
-                if job == Job::Rome {
-                    rome::run(ft, &self.store, today, rome::DEFAULT_WORKERS).await
-                } else {
-                    tech::run(ft, &self.store, today).await
+                match job {
+                    Job::Rome => rome::run(ft, &self.store, today, rome::DEFAULT_WORKERS).await,
+                    Job::Tech => tech::run(ft, &self.store, today).await,
+                    _ => carte::run(ft, &self.store, today).await,
                 }
             }
         }
@@ -359,6 +390,108 @@ pub async fn job_loop<R: Runner, C: WallClock>(
     }
 }
 
+/// Âge de `carte.js` : dû s'il est absent (aucun succès connu) ou vieux de PLUS de 28 jours.
+pub fn carte_is_stale(now: DateTime<Utc>, last_ok: Option<DateTime<Utc>>) -> bool {
+    last_ok.is_none_or(|ok| now - ok > Span::days(CARTE_MAX_AGE_DAYS))
+}
+
+/// Premier lancement de `carte` au démarrage du programme : 30 s plus tard si `carte.js` est absent ou
+/// vieux de plus de 28 jours, sinon au prochain lundi 04:00 (où l'âge est revérifié).
+pub fn carte_first_due(now: DateTime<Utc>, last_ok: Option<DateTime<Utc>>) -> DateTime<Utc> {
+    if carte_is_stale(now, last_ok) {
+        now + Span::seconds(STARTUP_DELAY_SECS)
+    } else {
+        next_slot_after(now, &CARTE_EVERY)
+    }
+}
+
+/// Boucle du job `carte`. Ne rend jamais la main. À chaque échéance (30 s après le démarrage si dû, puis
+/// chaque lundi 04:00 UTC) :
+/// - `carte.js` récent (28 jours au plus) : rien, prochaine vérification au lundi suivant ;
+/// - `rome.js` absent (`Runner::can_run`) : rien à faire, journal explicite, ni erreur ni échec
+///   consigné ; nouvelle vérification dans `CARTE_RECHECK_SECS` (au plus tard au lundi suivant) ;
+/// - sinon la collecte tourne ; après un échec, reprise selon `retry_delay_secs` (1 h, 6 h, 24 h), sans
+///   jamais dépasser le lundi suivant, où l'âge est revérifié.
+pub async fn carte_loop<R: Runner, C: WallClock>(
+    runner: Arc<R>,
+    clock: Arc<C>,
+    status: StatusBoard,
+    seed: SeedTimes,
+) {
+    let name = Job::Carte.name();
+    let mut due = carte_first_due(clock.now(), last_ok_of(&status, &seed, name));
+    let mut failures: u32 = 0;
+    tracing::info!(job = name, prochain = %due, "planification");
+    loop {
+        sleep_until(&*clock, due).await;
+        let now = clock.now();
+        let slot = next_slot_after(now, &CARTE_EVERY);
+        if !carte_is_stale(now, last_ok_of(&status, &seed, name)) {
+            tracing::info!(
+                job = name,
+                "carte.js a moins de {CARTE_MAX_AGE_DAYS} jours : rien à collecter"
+            );
+            failures = 0;
+            due = slot;
+        } else if !runner.can_run(Job::Carte) {
+            tracing::info!(
+                job = name,
+                "rome.js absent : la collecte carte attend (rien à faire pour l'instant)"
+            );
+            due = (now + Span::seconds(CARTE_RECHECK_SECS)).min(slot);
+        } else if run_job(&*runner, &*clock, &status, Job::Carte)
+            .await
+            .is_ok()
+        {
+            failures = 0;
+            due = next_slot_after(clock.now(), &CARTE_EVERY);
+        } else {
+            let now = clock.now();
+            failures += 1;
+            let retry = now + Span::seconds(retry_delay_secs(&CARTE_EVERY, failures));
+            let slot = next_slot_after(now, &CARTE_EVERY);
+            if retry >= slot {
+                failures = 0;
+                due = slot;
+            } else {
+                due = retry;
+            }
+        }
+        tracing::info!(job = name, prochain = %due, "planification");
+    }
+}
+
+/// Un seul job France Travail à la fois : `rome`, `tech` et `carte` se partagent un verrou (le quota de
+/// l'API est partagé ; `carte` dure une heure). `core` (sources publiques) n'est jamais retardé. Le
+/// verrou est équitable : un job qui attend passe dans l'ordre d'arrivée.
+pub struct FtGate<R> {
+    inner: Arc<R>,
+    lock: tokio::sync::Mutex<()>,
+}
+
+impl<R: Runner> FtGate<R> {
+    pub fn new(inner: Arc<R>) -> Self {
+        FtGate {
+            inner,
+            lock: tokio::sync::Mutex::new(()),
+        }
+    }
+}
+
+impl<R: Runner> Runner for FtGate<R> {
+    fn can_run(&self, job: Job) -> bool {
+        self.inner.can_run(job)
+    }
+
+    async fn run(&self, job: Job) -> Result<(), CollectError> {
+        let _turn = match job {
+            Job::Core => None,
+            Job::Rome | Job::Tech | Job::Carte => Some(self.lock.lock().await),
+        };
+        self.inner.run(job).await
+    }
+}
+
 /// Boucles à démarrer : `core` toujours, France Travail seulement avec identifiants.
 pub fn loops_to_start(ft_enabled: bool) -> Vec<(Vec<Job>, Every)> {
     let mut v = vec![(vec![Job::Core], CORE_EVERY)];
@@ -378,9 +511,10 @@ pub async fn run_forever_with<R: Runner, C: WallClock>(
 ) {
     if !ft_enabled {
         tracing::warn!(
-            "identifiants France Travail absents : collectes rome et tech désactivées (core reste actif)"
+            "identifiants France Travail absents : collectes rome, tech et carte désactivées (core reste actif)"
         );
     }
+    let runner = Arc::new(FtGate::new(runner));
     let loops = loops_to_start(ft_enabled).into_iter().map(|(jobs, every)| {
         job_loop(
             runner.clone(),
@@ -391,7 +525,12 @@ pub async fn run_forever_with<R: Runner, C: WallClock>(
             every,
         )
     });
-    futures::future::join_all(loops).await;
+    let carte = async {
+        if ft_enabled {
+            carte_loop(runner.clone(), clock.clone(), status.clone(), seed.clone()).await;
+        }
+    };
+    futures::future::join(futures::future::join_all(loops), carte).await;
 }
 
 /// Planificateur de production : `core` quotidien, France Travail hebdomadaire.
@@ -405,7 +544,7 @@ pub async fn run_forever(ctx: Arc<Ctx>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Mutex;
 
     fn utc(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> DateTime<Utc> {
@@ -537,6 +676,12 @@ mod tests {
             parse_args(&args(&["once", "tech"])),
             Ok(Command::Once(Job::Tech))
         );
+        assert_eq!(
+            parse_args(&args(&["once", "carte"])),
+            Ok(Command::Once(Job::Carte))
+        );
+        assert_eq!(Job::Carte.name(), "carte");
+        assert!(USAGE.contains("carte"));
     }
 
     #[test]
@@ -579,6 +724,11 @@ mod tests {
         duration: Duration,
         active: AtomicUsize,
         max_active: AtomicUsize,
+        /// Jobs France Travail (rome, tech, carte) en cours : jamais plus d'un à la fois.
+        ft_active: AtomicUsize,
+        ft_max_active: AtomicUsize,
+        /// `rome.js` est-il présent ? (réponse de `can_run` pour `carte`)
+        rome_ready: AtomicBool,
     }
 
     impl FakeRunner {
@@ -590,6 +740,9 @@ mod tests {
                 duration: Duration::ZERO,
                 active: AtomicUsize::new(0),
                 max_active: AtomicUsize::new(0),
+                ft_active: AtomicUsize::new(0),
+                ft_max_active: AtomicUsize::new(0),
+                rome_ready: AtomicBool::new(true),
             })
         }
         fn with(
@@ -611,14 +764,25 @@ mod tests {
     }
 
     impl Runner for FakeRunner {
+        fn can_run(&self, job: Job) -> bool {
+            job != Job::Carte || self.rome_ready.load(Ordering::SeqCst)
+        }
+
         async fn run(&self, job: Job) -> Result<(), CollectError> {
             self.calls.lock().unwrap().push((job, self.clock.now()));
             let n = self.active.fetch_add(1, Ordering::SeqCst) + 1;
             self.max_active.fetch_max(n, Ordering::SeqCst);
+            if job != Job::Core {
+                let n = self.ft_active.fetch_add(1, Ordering::SeqCst) + 1;
+                self.ft_max_active.fetch_max(n, Ordering::SeqCst);
+            }
             if !self.duration.is_zero() {
                 tokio::time::sleep(self.duration).await;
             }
             self.active.fetch_sub(1, Ordering::SeqCst);
+            if job != Job::Core {
+                self.ft_active.fetch_sub(1, Ordering::SeqCst);
+            }
             let next = {
                 let mut s = self.script.lock().unwrap();
                 if s.is_empty() {
@@ -1036,5 +1200,470 @@ mod tests {
         assert_eq!(retry_delay_secs(&WEEKLY, 3), 86_400);
         assert_eq!(retry_delay_secs(&WEEKLY, 9), 86_400);
         assert_eq!(retry_delay_secs(&DAILY, 5), 3600);
+    }
+
+    // ----- job carte : lundi 04:00 UTC, seulement si carte.js est absent ou vieux de plus de 28 jours -----
+
+    const CARTE: Every = CARTE_EVERY;
+
+    #[test]
+    fn carte_slot_is_monday_0400_utc_after_the_ft_job() {
+        assert_eq!(
+            CARTE,
+            Every::WeeklyAt {
+                weekday: Weekday::Mon,
+                hour: 4,
+                min: 0
+            }
+        );
+        // le job FT de 03:00 passe avant : même lundi, une heure d'écart
+        let ft = utc(2026, 11, 9, 3, 0, 0);
+        assert_eq!(next_slot_after(ft, &WEEKLY), utc(2026, 11, 16, 3, 0, 0));
+        assert_eq!(next_slot_after(ft, &CARTE), utc(2026, 11, 9, 4, 0, 0));
+        // dimanche soir -> lundi 04:00 ; lundi 04:00 pile -> lundi suivant (strictement après)
+        assert_eq!(
+            next_slot_after(utc(2026, 11, 8, 23, 59, 0), &CARTE),
+            utc(2026, 11, 9, 4, 0, 0)
+        );
+        assert_eq!(
+            next_slot_after(utc(2026, 11, 9, 4, 0, 0), &CARTE),
+            utc(2026, 11, 16, 4, 0, 0)
+        );
+        assert_eq!(
+            next_slot_after(utc(2026, 12, 31, 12, 0, 0), &CARTE),
+            utc(2027, 1, 4, 4, 0, 0)
+        );
+        assert_eq!(retry_delay_secs(&CARTE, 1), 3600);
+        assert_eq!(retry_delay_secs(&CARTE, 2), 6 * 3600);
+        assert_eq!(retry_delay_secs(&CARTE, 3), 24 * 3600);
+        assert_eq!(retry_delay_secs(&CARTE, 8), 24 * 3600);
+        assert_eq!((CARTE_MAX_AGE_DAYS, CARTE_RECHECK_SECS), (28, 3600));
+    }
+
+    #[test]
+    fn carte_is_stale_when_absent_or_strictly_older_than_28_days() {
+        let now = utc(2026, 11, 9, 4, 0, 0);
+        assert!(carte_is_stale(now, None));
+        assert!(!carte_is_stale(now, Some(now)));
+        assert!(!carte_is_stale(now, Some(now - Span::days(27))));
+        // exactement 28 jours : pas encore ; une seconde de plus : oui
+        assert!(!carte_is_stale(now, Some(now - Span::days(28))));
+        assert!(carte_is_stale(
+            now,
+            Some(now - Span::days(28) - Span::seconds(1))
+        ));
+        assert!(carte_is_stale(now, Some(now - Span::days(120))));
+        // une date dans le futur n'est pas vieille
+        assert!(!carte_is_stale(now, Some(now + Span::hours(1))));
+    }
+
+    #[test]
+    fn carte_first_due_is_30s_when_stale_else_next_monday_0400() {
+        let now = utc(2026, 11, 11, 15, 0, 0); // mercredi
+        assert_eq!(carte_first_due(now, None), now + Span::seconds(30));
+        assert_eq!(
+            carte_first_due(now, Some(now - Span::days(29))),
+            now + Span::seconds(30)
+        );
+        assert_eq!(
+            carte_first_due(now, Some(now - Span::days(28))),
+            utc(2026, 11, 16, 4, 0, 0)
+        );
+        assert_eq!(
+            carte_first_due(now, Some(now - Span::days(3))),
+            utc(2026, 11, 16, 4, 0, 0)
+        );
+        // un lundi après 04:00 : le lundi suivant
+        let monday = utc(2026, 11, 9, 10, 0, 0);
+        assert_eq!(
+            carte_first_due(monday, Some(monday)),
+            utc(2026, 11, 16, 4, 0, 0)
+        );
+    }
+
+    fn spawn_carte(
+        r: &Arc<FakeRunner>,
+        clock: &Arc<TokioClock>,
+        status: &StatusBoard,
+        seed: SeedTimes,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::task::spawn_local(carte_loop(r.clone(), clock.clone(), status.clone(), seed))
+    }
+
+    fn carte_seed(at: DateTime<Utc>) -> SeedTimes {
+        let mut seed = SeedTimes::new();
+        seed.insert("carte".into(), at);
+        seed
+    }
+
+    fn carte_calls(r: &FakeRunner) -> Vec<DateTime<Utc>> {
+        r.calls()
+            .into_iter()
+            .filter(|c| c.0 == Job::Carte)
+            .map(|c| c.1)
+            .collect()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn carte_absent_at_startup_runs_30s_later() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let status = StatusBoard::new();
+            let r = FakeRunner::new(&clock);
+            let h = spawn_carte(&r, &clock, &status, SeedTimes::new());
+            pass(Duration::from_secs(29)).await;
+            assert!(carte_calls(&r).is_empty());
+            pass(Duration::from_secs(2)).await;
+            let calls = carte_calls(&r);
+            assert_eq!(calls.len(), 1);
+            let gap = (calls[0] - start()).num_milliseconds();
+            assert!((30_000..=30_005).contains(&gap), "écart {gap} ms");
+            assert!(status.snapshot()["carte"].last_ok.is_some());
+            h.abort();
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn carte_older_than_28_days_at_startup_runs_30s_later() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let r = FakeRunner::new(&clock);
+            let seed = carte_seed(start() - Span::days(29));
+            let h = spawn_carte(&r, &clock, &StatusBoard::new(), seed);
+            pass(Duration::from_secs(31)).await;
+            assert_eq!(carte_calls(&r).len(), 1);
+            h.abort();
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn recent_carte_waits_for_a_monday_where_it_is_older_than_28_days() {
+        local(async move {
+            // départ lundi 9 novembre 10:00 ; fichier du 20 octobre 10:00 (20 jours)
+            let clock = TokioClock::new(start());
+            let r = FakeRunner::new(&clock);
+            let h = spawn_carte(
+                &r,
+                &clock,
+                &StatusBoard::new(),
+                carte_seed(start() - Span::days(20)),
+            );
+            // lundi 16 (26 j 18 h) : trop récent ; rien dans les 10 premiers jours
+            pass(Duration::from_secs(10 * 24 * 3600)).await;
+            assert!(carte_calls(&r).is_empty(), "{:?}", carte_calls(&r));
+            // lundi 23 novembre 04:00 (33 jours) : lancé, une seule fois
+            pass(Duration::from_secs(5 * 24 * 3600)).await;
+            let calls = carte_calls(&r);
+            assert_eq!(calls.len(), 1);
+            let slot = utc(2026, 11, 23, 4, 0, 0);
+            assert!(
+                calls[0] >= slot && calls[0] < slot + Span::milliseconds(5),
+                "{:?}",
+                calls[0]
+            );
+            h.abort();
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn carte_fresh_at_startup_never_runs_on_a_monday_before_28_days() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let r = FakeRunner::new(&clock);
+            // fichier de la veille (8 novembre 10:00) : lundis 16, 23 et 30 novembre trop récents ;
+            // lundi 7 décembre 04:00 : 28 j 18 h, plus vieux de 28 jours : lancé
+            let h = spawn_carte(
+                &r,
+                &clock,
+                &StatusBoard::new(),
+                carte_seed(start() - Span::days(1)),
+            );
+            pass(Duration::from_secs(27 * 24 * 3600)).await; // jusqu'au 6 décembre 10:00
+            assert!(carte_calls(&r).is_empty());
+            pass(Duration::from_secs(24 * 3600)).await;
+            let calls = carte_calls(&r);
+            assert_eq!(calls.len(), 1, "{calls:?}");
+            let slot = utc(2026, 12, 7, 4, 0, 0);
+            assert!(
+                calls[0] >= slot && calls[0] < slot + Span::milliseconds(5),
+                "{:?}",
+                calls[0]
+            );
+            h.abort();
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn carte_without_rome_js_does_nothing_quietly_then_runs_when_it_appears() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let status = StatusBoard::new();
+            let r = FakeRunner::new(&clock);
+            r.rome_ready.store(false, Ordering::SeqCst);
+            let h = spawn_carte(&r, &clock, &status, SeedTimes::new());
+            // 5 heures de vérifications : aucune collecte, aucune erreur, aucun état consigné
+            pass(Duration::from_secs(5 * 3600)).await;
+            assert!(r.calls().is_empty());
+            assert!(status.snapshot().is_empty(), "{:?}", status.snapshot());
+            // rome.js apparaît : la collecte part à la vérification suivante (au plus 1 h plus tard)
+            r.rome_ready.store(true, Ordering::SeqCst);
+            pass(Duration::from_secs(3640)).await;
+            assert_eq!(carte_calls(&r).len(), 1);
+            let snap = status.snapshot();
+            assert!(snap["carte"].last_ok.is_some() && snap["carte"].last_error.is_none());
+            h.abort();
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn carte_old_file_without_rome_js_is_not_collected_either() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let r = FakeRunner::new(&clock);
+            r.rome_ready.store(false, Ordering::SeqCst);
+            let h = spawn_carte(
+                &r,
+                &clock,
+                &StatusBoard::new(),
+                carte_seed(start() - Span::days(60)),
+            );
+            pass(Duration::from_secs(3 * 24 * 3600)).await;
+            assert!(r.calls().is_empty());
+            h.abort();
+        })
+        .await;
+    }
+
+    fn carte_gaps(r: &FakeRunner) -> Vec<i64> {
+        carte_calls(r)
+            .windows(2)
+            .map(|w| (w[1] - w[0]).num_milliseconds())
+            .collect()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn carte_failures_back_off_1h_6h_24h_and_are_recorded() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let status = StatusBoard::new();
+            let r = FakeRunner::with(&clock, fails(4), Duration::ZERO);
+            let h = spawn_carte(&r, &clock, &status, SeedTimes::new());
+            pass(Duration::from_secs(40 * 3600)).await;
+            let g = carte_gaps(&r);
+            assert_eq!(g.len(), 3, "{g:?}");
+            assert!(
+                close(g[0], 3600) && close(g[1], 6 * 3600) && close(g[2], 24 * 3600),
+                "{g:?}"
+            );
+            let st = &status.snapshot()["carte"];
+            assert!(st.last_error.as_deref().unwrap().contains("panne") && st.last_ok.is_none());
+            h.abort();
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn carte_ladder_resets_after_success_and_waits_28_days_before_the_next_run() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let status = StatusBoard::new();
+            // échec, échec, succès, puis (au premier lundi où le fichier a plus de 28 jours) un échec :
+            // l'échelle repart de 1 h
+            let script = vec![Err("a".into()), Err("b".into()), Ok(()), Err("c".into())];
+            let r = FakeRunner::with(&clock, script, Duration::ZERO);
+            let h = spawn_carte(&r, &clock, &status, SeedTimes::new());
+            pass(Duration::from_secs(40 * 24 * 3600)).await;
+            let t = carte_calls(&r);
+            let g = carte_gaps(&r);
+            assert!(close(g[0], 3600) && close(g[1], 6 * 3600), "{g:?}");
+            // succès le lundi 9 novembre à 17:00:30 + 6 h ; aucun lancement aux lundis 16, 23, 30 novembre
+            // ni 7 décembre 04:00 (27 j 11 h) ; relancé lundi 14 décembre 04:00
+            assert!(t.len() >= 4, "{t:?}");
+            let slot = utc(2026, 12, 14, 4, 0, 0);
+            assert!(
+                t[3] >= slot && t[3] < slot + Span::milliseconds(5),
+                "{:?}",
+                t[3]
+            );
+            assert!(t.len() >= 5, "{t:?}");
+            assert!(
+                close(g[3], 3600),
+                "après succès, l'échelle repart à 1 h : {g:?}"
+            );
+            h.abort();
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn carte_retry_never_goes_past_the_next_monday_slot() {
+        local(async move {
+            // dimanche 15 novembre 20:00 : échec à 20:00:30, 21:00:30, 03:00:30 ; le prochain essai (+24 h)
+            // dépasserait lundi 04:00 : nouveau contrôle à ce créneau, où la collecte est relancée
+            let clock = TokioClock::new(utc(2026, 11, 15, 20, 0, 0));
+            let status = StatusBoard::new();
+            let r = FakeRunner::with(&clock, fails(3), Duration::ZERO);
+            let h = spawn_carte(&r, &clock, &status, SeedTimes::new());
+            pass(Duration::from_secs(9 * 3600)).await;
+            let t = carte_calls(&r);
+            assert_eq!(t.len(), 4, "{t:?}");
+            let slot = utc(2026, 11, 16, 4, 0, 0);
+            assert!(
+                t[3] >= slot && t[3] < slot + Span::milliseconds(5),
+                "{:?}",
+                t[3]
+            );
+            assert!(status.snapshot()["carte"].last_ok.is_some());
+            h.abort();
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn carte_panic_is_isolated_and_retried_in_one_hour() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let status = StatusBoard::new();
+            let r = FakeRunner::with(&clock, vec![Err("PANIC".into())], Duration::ZERO);
+            let h = spawn_carte(&r, &clock, &status, SeedTimes::new());
+            pass(Duration::from_secs(31)).await;
+            let err = status.snapshot()["carte"].last_error.clone().unwrap();
+            assert_eq!(err, "récupération impossible : panique interne carte");
+            assert!(!err.contains("secret-xyz"));
+            pass(Duration::from_secs(3601)).await;
+            assert_eq!(carte_calls(&r).len(), 2);
+            h.abort();
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn carte_never_overlaps_rome_or_tech_but_core_is_not_delayed() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let status = StatusBoard::new();
+            // chaque collecte dure 2 h ; rome, tech et carte sont tous dus 30 s après le démarrage
+            let r = FakeRunner::with(&clock, vec![], Duration::from_secs(2 * 3600));
+            let h = tokio::task::spawn_local(run_forever_with(
+                r.clone(),
+                clock.clone(),
+                status.clone(),
+                SeedTimes::new(),
+                true,
+            ));
+            pass(Duration::from_secs(60)).await;
+            // core part tout de suite, en même temps qu'un job France Travail
+            assert!(r.jobs().contains(&Job::Core));
+            assert!(r.max_active.load(Ordering::SeqCst) >= 2);
+            pass(Duration::from_secs(10 * 3600)).await;
+            let jobs = r.jobs();
+            for j in [Job::Rome, Job::Tech, Job::Carte] {
+                assert!(jobs.contains(&j), "{j:?} jamais lancé : {jobs:?}");
+            }
+            assert_eq!(
+                r.ft_max_active.load(Ordering::SeqCst),
+                1,
+                "rome, tech et carte ne se chevauchent jamais"
+            );
+            // chaque job FT a commencé après la fin du précédent (2 h d'écart au moins)
+            let mut ft: Vec<_> = r.calls().into_iter().filter(|c| c.0 != Job::Core).collect();
+            ft.sort_by_key(|c| c.1);
+            for w in ft.windows(2) {
+                assert!(w[1].1 - w[0].1 >= Span::hours(2), "{ft:?}");
+            }
+            h.abort();
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ft_gate_serializes_ft_jobs_only_and_forwards_can_run() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let r = FakeRunner::with(&clock, vec![], Duration::from_secs(100));
+            let gate = Arc::new(FtGate::new(r.clone()));
+            let started = clock.now();
+            let (a, b, c, d) = tokio::join!(
+                gate.run(Job::Rome),
+                gate.run(Job::Carte),
+                gate.run(Job::Tech),
+                gate.run(Job::Core)
+            );
+            assert!(a.is_ok() && b.is_ok() && c.is_ok() && d.is_ok());
+            assert_eq!(r.ft_max_active.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                r.max_active.load(Ordering::SeqCst),
+                2,
+                "core tourne en parallèle"
+            );
+            // 3 jobs de 100 s l'un après l'autre
+            assert!(clock.now() - started >= Span::seconds(300));
+            // ordre d'arrivée respecté
+            let ft: Vec<Job> = r.jobs().into_iter().filter(|j| *j != Job::Core).collect();
+            assert_eq!(ft, vec![Job::Rome, Job::Carte, Job::Tech]);
+            r.rome_ready.store(false, Ordering::SeqCst);
+            assert!(!gate.can_run(Job::Carte));
+            assert!(gate.can_run(Job::Rome) && gate.can_run(Job::Core));
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn carte_loop_runs_with_ft_credentials_only() {
+        local(async move {
+            let clock = TokioClock::new(start());
+            let r = FakeRunner::new(&clock);
+            let h = tokio::task::spawn_local(run_forever_with(
+                r.clone(),
+                clock.clone(),
+                StatusBoard::new(),
+                SeedTimes::new(),
+                true,
+            ));
+            pass(Duration::from_secs(60)).await;
+            assert!(r.jobs().contains(&Job::Carte));
+            h.abort();
+            let clock = TokioClock::new(start());
+            let r = FakeRunner::new(&clock);
+            let h = tokio::task::spawn_local(run_forever_with(
+                r.clone(),
+                clock.clone(),
+                StatusBoard::new(),
+                SeedTimes::new(),
+                false,
+            ));
+            pass(Duration::from_secs(3 * 24 * 3600)).await;
+            assert!(!r.jobs().contains(&Job::Carte));
+            h.abort();
+        })
+        .await;
+    }
+
+    #[test]
+    fn ctx_needs_rome_js_for_carte_and_ft_credentials_to_run_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = Ctx {
+            http: reqwest::Client::new(),
+            store: Store::new(dir.path()),
+            status: StatusBoard::new(),
+            cfg: Config::from_map(&Default::default()).unwrap(),
+            ft: None,
+            seed: SeedTimes::new(),
+        };
+        assert!(!ctx.can_run(Job::Carte));
+        assert!(ctx.can_run(Job::Rome) && ctx.can_run(Job::Tech) && ctx.can_run(Job::Core));
+        std::fs::write(dir.path().join("rome.js"), "window.ROME={};").unwrap();
+        assert!(ctx.can_run(Job::Carte));
+        // sans identifiants, le job lui-même échoue avec un message explicite
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let err = rt.block_on(ctx.run(Job::Carte)).unwrap_err().to_string();
+        assert!(err.contains("identifiants France Travail absents"), "{err}");
     }
 }

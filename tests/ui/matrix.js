@@ -62,6 +62,28 @@
       }
     }
   }
+  // page « Carte de France » : chaque mesure x trois métiers, puis retour aux courbes
+  var bouton = document.querySelector("#mapbtn");
+  if (bouton && visible(bouton)) {
+    bouton.click(); await pause(150);
+    var mesures = textes("#mapmetrics");
+    var noms = Array.prototype.map.call(document.querySelectorAll("#mapq option"), function (o) { return o.value; }).slice(0, 3);
+    for (var a = 0; a < noms.length; a++) {
+      var champ = document.querySelector("#mapq"); champ.value = noms[a]; champ.dispatchEvent(new Event("change")); await pause(80);
+      for (var b = 0; b < mesures.length; b++) {
+        await presser("#mapmetrics", mesures[b]);
+        var chemin = ["Carte", noms[a], mesures[b]];
+        var avantCarte = res.nbErreurs;
+        res.combos++;
+        if (erreurs.length) { res.nbErreurs += erreurs.length; erreurs = []; }
+        var okCarte = res.nbErreurs === avantCarte;
+        if (document.querySelectorAll("#mapsvg path").length < 90 || document.querySelectorAll("#maplists li").length === 0) { res.nbListesVides++; okCarte = false; }
+        if (document.documentElement.scrollWidth > window.innerWidth) { res.nbDebordements++; okCarte = false; }
+        if (!okCarte && res.echecs.length < 10) res.echecs.push(chemin.join(" > "));
+      }
+    }
+    bouton.click(); await pause(150);
+  }
   if (res.combos === 0) res.echecs.push("aucun combo exécuté");
   if (erreurs.length) { res.nbErreurs += erreurs.length; erreurs = []; }
   } finally {

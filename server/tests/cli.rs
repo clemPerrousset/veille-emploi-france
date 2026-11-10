@@ -37,3 +37,16 @@ fn unknown_job_exits_with_code_2() {
     assert_eq!(out.status.code(), Some(2));
     assert!(out.stdout.is_empty());
 }
+
+#[test]
+fn once_carte_without_credentials_fails_with_one_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = bin(dir.path()).args(["once", "carte"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(stdout.lines().count(), 1, "stdout = {stdout:?}");
+    assert!(
+        stdout.contains("carte") && stdout.contains("échec"),
+        "{stdout}"
+    );
+}

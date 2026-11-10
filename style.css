@@ -61,3 +61,17 @@ tbody tr:hover{background:var(--bg)}
   .summary{font-size:16px}
   header h1{font-size:19px}
 }
+
+.hrow{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.maph{font-size:17px;margin:0 0 6px}
+.mapq{flex:1;min-width:min(100%,340px);font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);width:min(100%,420px)}
+.mapgrid{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:18px;align-items:start}
+.mapbox svg{width:100%;height:auto;display:block}
+.mapbox path{stroke:var(--card);stroke-width:1;cursor:pointer}
+.mapbox path:hover{stroke:var(--ink);stroke-width:2}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin:8px 0 0;font-size:12px;color:var(--muted)}
+.legend .lg{display:inline-flex;align-items:center;gap:5px}
+.legend i{display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid var(--line)}
+.maprank{margin:0;padding-left:20px;font-size:14px}
+@media (max-width:860px){.mapgrid{grid-template-columns:minmax(0,1fr)}}
+.legend .lgcap{flex-basis:100%;color:var(--ink);font-weight:600}

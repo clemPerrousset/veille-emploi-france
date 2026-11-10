@@ -130,6 +130,44 @@ async fn tension_file_is_served_after_save() {
 }
 
 #[tokio::test]
+async fn carte_file_is_served_after_save() {
+    let (app, store, _d) = app();
+    assert_eq!(get(&app, "/data/carte.js").await.status(), StatusCode::NOT_FOUND);
+    store.save("carte.js", &json!({"deps": [], "items": {}})).unwrap();
+    let res = get(&app, "/data/carte.js").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(hdr(&res, "content-type"), "application/javascript; charset=utf-8");
+    assert_eq!(hdr(&res, "cache-control"), "public, max-age=300");
+    assert_eq!(body_string(res).await, r#"window.CARTE={"deps":[],"items":{}};"#);
+}
+
+#[tokio::test]
+async fn france_outlines_are_served_from_the_binary() {
+    // dossier de donnees VIDE : le fichier statique ne vient pas de la
+    let (app, _s, dir) = app();
+    assert!(!dir.path().join("france.js").exists());
+    let res = get(&app, "/data/france.js").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(hdr(&res, "content-type"), "application/javascript; charset=utf-8");
+    assert_security_headers(&res);
+    let body = body_string(res).await;
+    assert!(body.starts_with("window.FRANCE="), "{}", &body[..40.min(body.len())]);
+    // meme contenu que le fichier du depot (incorpore a la compilation)
+    let repo = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../data/france.js")).unwrap();
+    assert_eq!(body, repo);
+    // un france.js pose dans le dossier de donnees n'est jamais servi a sa place
+    std::fs::write(dir.path().join("france.js"), "window.FRANCE=SECRET;").unwrap();
+    let res = get(&app, "/data/france.js").await;
+    assert_eq!(body_string(res).await, repo);
+    // lecture seule, comme les autres ressources
+    let res = send(&app, Method::POST, "/data/france.js", false).await;
+    assert_eq!(res.status(), StatusCode::METHOD_NOT_ALLOWED);
+    // compresse sur demande
+    let res = send(&app, Method::GET, "/data/france.js", true).await;
+    assert_eq!(hdr(&res, "content-encoding"), "gzip");
+}
+
+#[tokio::test]
 async fn unknown_data_name_is_404() {
     let (app, _s, dir) = app();
     // Des fichiers non listes dans le dossier de donnees ne doivent jamais sortir.
@@ -174,7 +212,8 @@ async fn health_has_no_secret_and_lists_files() {
     assert!(v["files"]["rome.js"]["age_seconds"].is_number());
     assert_eq!(v["files"]["data.js"]["exists"], false);
     assert!(v["files"]["data.js"]["age_seconds"].is_null());
-    assert_eq!(v["files"].as_object().unwrap().len(), 6);
+    assert_eq!(v["files"].as_object().unwrap().len(), 7);
+    assert_eq!(v["files"]["carte.js"]["exists"], false);
     assert_eq!(v["files"]["tension.js"]["exists"], false);
 }
 

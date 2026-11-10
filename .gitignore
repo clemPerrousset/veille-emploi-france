@@ -21,3 +21,5 @@ __pycache__/
 
 # Build Rust
 server/target/
+data/carte.js
+data/carte_cache.json

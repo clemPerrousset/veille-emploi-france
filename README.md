@@ -17,6 +17,7 @@ python fetch_data.py    # Indeed, Eurostat, DARES : quelques secondes
 python fetch_rome.py    # offres par métier (France Travail) : environ 10 minutes
 python fetch_tech.py    # demandeurs, embauches, tension des métiers tech : moins d'une minute
 python fetch_tension.py # tension et demandeurs des 300 métiers les plus volumineux (vue « Où ça recrute ») : environ 5 minutes
+python fetch_carte.py   # offres et demandeurs par département (carte de France) : près d'une heure
 ```
 
 `fetch_rome.py`, `fetch_tech.py` et `fetch_tension.py` (à lancer après `fetch_rome.py`) ont besoin d'un fichier `.env` (voir plus bas). `fetch_data.py` n'en a pas besoin. Les données France Travail changent au rythme trimestriel : inutile de les relancer plus d'une fois par trimestre. Indeed est quotidien.
@@ -40,6 +41,7 @@ FT_CLIENT_SECRET=...
 | Exposition à l'IA | les plus exposés, exposés et en montée, par niveau d'exposition (5 groupes) |
 | Tech | vue rapide (3 catégories Indeed), tableau de bord (18 métiers : offres, demandeurs, embauches, tension) |
 | Métiers précis | jusqu'à 6 métiers de ton choix, catégories Indeed ou métiers précis |
+| Carte de France (bouton en haut à droite) | une autre page : tape un métier (parmi les 100 qui ont le plus d'offres) et la carte colore chaque département selon le nombre d'offres, la concentration du métier (part dans les offres du département, comparée à la moyenne nationale) ou le nombre de demandeurs pour 100 offres |
 
 Un interrupteur « Niveau de détail » bascule entre les **catégories Indeed** (34, quotidien) et les **métiers précis France Travail** (codes ROME, trimestriel). La période est réglable (1 mois à depuis 2020, ou une date de début), et les courbes macro se superposent en base 100.
 
@@ -83,6 +85,8 @@ Pour corriger un score, modifie le fichier à la main. Une vérification plus so
 | `fetch_rome.py` | collecte les offres des 1 900 métiers ROME, écrit `data/rome.js` |
 | `fetch_tech.py` | collecte demandeurs, embauches, tension (18 métiers tech), écrit `data/tech.js`. La liste des codes est modifiable en tête du fichier |
 | `fetch_tension.py` | collecte la tension annuelle et les demandeurs des 300 métiers aux plus d'offres (lit `data/rome.js`), écrit `data/tension.js` |
+| `fetch_carte.py` | collecte offres et demandeurs par département (96 départements métropolitains) pour les 100 métiers aux plus d'offres : environ 19 000 appels, près d'une heure. Reprend là où il s'est arrêté (`data/carte_cache.json`). Écrit `data/carte.js` |
+| `tools/make_france_map.py` | produit `data/france.js` (contours simplifiés des départements, de [france-geojson](https://github.com/gregoiredavid/france-geojson), dérivé d'IGN Admin Express, Licence Ouverte Etalab 2.0). À lancer une seule fois |
 | `data/*.js` | données chargées par `index.html` (valeurs assignées à `window.*`, pour fonctionner sans serveur) |
 | `server/` | version Rust : serveur web et collecteurs (voir « Version Rust ») |
 | `docs/deploy/DEPLOIEMENT.md` | guide de déploiement HTTPS sur le serveur |
@@ -127,7 +131,7 @@ Les tâches possibles sont `core` (Indeed, Eurostat, DARES), `rome` et `tech` (F
 
 Un fichier `.env` du dossier courant est lu au démarrage (l'environnement du processus a priorité) ; en production, on utilise à la place un fichier d'environnement systemd. `ai_exposure.js` et `ai_rome.js` sont créés au premier démarrage à partir de valeurs par défaut incorporées, sans jamais écraser un fichier existant.
 
-**Test de l'interface (développeurs)** : `tests/ui/matrix.js` parcourt automatiquement les 140 combinaisons de l'interface ; ce n'est pas un contrôle à faire sur le serveur.
+**Test de l'interface (développeurs)** : `tests/ui/matrix.js` parcourt automatiquement les 149 combinaisons de l'interface ; ce n'est pas un contrôle à faire sur le serveur.
 
 **Mise en ligne** : suivez [`docs/deploy/DEPLOIEMENT.md`](docs/deploy/DEPLOIEMENT.md) (compilation sur le serveur, service systemd, nginx, HTTPS avec Let's Encrypt, exploitation).
 
