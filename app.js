@@ -158,7 +158,7 @@
     { id: "romeTech", label: "Tech : tableau de bord", title: "Métiers du numérique (ROME)", rome: true, tech: true },
     { id: "mine", label: "Mon suivi", title: "Mes métiers" }
   ].filter(function (v) { return (!v.rome || ROME_KEYS.length) && (!v.tech || TECH_CODES.length) && (!v.ai || AIR); });
-  var state = { view: "global", period: 365, custom: "", rebase: "window", macro: [], mine: ["c:Software Development"], techMetric: "off" };
+  var state = { view: "global", period: 365, custom: "", rebase: "window", macro: [], mine: ["c:Software Development"], techMetric: "off", rankMode: "rel" };
   try { var sv = JSON.parse(localStorage.getItem("veille-emploi") || "null"); if (sv) Object.keys(state).forEach(function (k) { if (sv[k] !== undefined) state[k] = sv[k]; }); } catch (e) {}
   if (!VIEWS.some(function (v) { return v.id === state.view; })) state.view = "global";
   state.mine = state.mine.filter(function (k) { return ITEMS[k]; });
@@ -202,7 +202,23 @@
     if (pos === 0) return "Aucun des " + what + " ne monte sur la période. Ceux qui résistent le mieux : ";
     return "Les " + what + " qui montent ou résistent le mieux : ";
   }
-  function names(keys, start) { return keys.map(function (k) { return ITEMS[k].label + " (" + pct(measure(ITEMS[k], start).delta) + ")"; }); }
+  function names(keys, start) {
+    var rel = state.rankMode === "rel", m = measure(ITEMS.total, start).delta;
+    return keys.map(function (k) {
+      var d = measure(ITEMS[k], start).delta;
+      return ITEMS[k].label + " (" + pct(d) + (rel ? ", " + sgn(d - m) + " pts vs marché" : "") + ")";
+    });
+  }
+  function sgn(x) { return (x > 0 ? "+" : x < 0 ? "−" : "") + nf1.format(Math.abs(x)); }
+  /* phrase d'introduction d'un classement, selon le mode : variation réelle ou écart au marché */
+  function rankIntro(keys, start, what, up) {
+    var m = measure(ITEMS.total, start).delta;
+    if (state.rankMode === "rel") {
+      return (up ? "Les " + what + " qui résistent le mieux (marché : " + pct(m) + ") : " : "Les " + what + " qui décrochent le plus par rapport au marché (" + pct(m) + ") : ");
+    }
+    if (!up) return "Les " + what + " qui baissent le plus : ";
+    return upWord(keys, start, what);
+  }
 
   function firstVal(item, start) { var i = lowerBound(item.xs, start); return i < item.xs.length ? item.ys[i] : 0; }
   function buildView(start) {
@@ -220,12 +236,12 @@
       sub = "Indice actuel : " + nf1.format(cur) + " (100 = 1er février 2020). Les nouvelles offres réagissent plus vite que le stock.";
     } else if (v === "empUp" || v === "empDown") {
       keys = rank(ALL_CATS, start, 5, v === "empUp" ? "up" : "down");
-      summary = (v === "empUp" ? upWord(keys, start, "métiers") : "Les métiers qui baissent le plus : ") + names(keys, start).join(", ") + ".";
+      summary = rankIntro(keys, start, "métiers", v === "empUp") + names(keys, start).join(", ") + ".";
       sub = "Marché global sur la même période : " + pct(tot.delta) + ". Catégories Indeed (34), pas des métiers fins.";
       market = true;
     } else if (v === "secUp" || v === "secDown") {
       keys = rank(ALL_GRPS, start, 5, v === "secUp" ? "up" : "down");
-      summary = (v === "secUp" ? upWord(keys, start, "secteurs") : "Les secteurs qui baissent le plus : ") + names(keys, start).join(", ") + ".";
+      summary = rankIntro(keys, start, "secteurs", v === "secUp") + names(keys, start).join(", ") + ".";
       sub = "Marché global sur la même période : " + pct(tot.delta) + ". Secteur = moyenne simple de ses catégories.";
       market = true;
     } else if (v === "aiExp") {
@@ -242,7 +258,7 @@
     } else if (v === "romeUp" || v === "romeDown") {
       var big = ROME_KEYS.filter(function (k) { return firstVal(ITEMS[k], start) >= ROME_MIN; });
       keys = rank(big, start, 5, v === "romeUp" ? "up" : "down");
-      summary = (v === "romeUp" ? upWord(keys, start, "métiers") : "Les métiers précis qui baissent le plus : ") + names(keys, start).join(", ") + ".";
+      summary = rankIntro(keys, start, "métiers précis", v === "romeUp") + names(keys, start).join(", ") + ".";
       sub = "Offres enregistrées, cumul sur 4 trimestres glissants (toutes offres, France), parmi les " + big.length + " métiers qui avaient au moins " + ROME_MIN.toLocaleString("fr-FR") + " offres cumulées au départ. Source : France Travail ; les pics isolés sont lissés. Marché global (Indeed) sur la même période : " + pct(tot.delta) + ".";
       market = true;
     } else if (v === "romeTech") {
@@ -483,10 +499,10 @@
   var NAV = [
     { g: "Emploi", items: [
       { label: "Global", id: "global" },
-      { label: "Métiers en montée", ids: { cat: "empUp", rome: "romeUp" } },
-      { label: "Métiers en descente", ids: { cat: "empDown", rome: "romeDown" } },
-      { label: "Secteurs en montée", id: "secUp" },
-      { label: "Secteurs en descente", id: "secDown" },
+      { label: "Métiers en montée", rel: "Métiers qui résistent", ids: { cat: "empUp", rome: "romeUp" } },
+      { label: "Métiers en descente", rel: "Métiers qui décrochent", ids: { cat: "empDown", rome: "romeDown" } },
+      { label: "Secteurs en montée", rel: "Secteurs qui résistent", id: "secUp" },
+      { label: "Secteurs en descente", rel: "Secteurs qui décrochent", id: "secDown" },
       { label: "Difficultés de recrutement", id: "vac" }] },
     { g: "Exposition à l'IA", items: [
       { label: "Les plus exposés", ids: { cat: "aiExp", rome: "romeAi" } },
@@ -511,9 +527,15 @@
       b.classList.add("tab"); gEl.appendChild(b);
     });
     var vEl = $("#views"); vEl.innerHTML = "";
-    curG.items.forEach(function (it) { vEl.appendChild(chip(it.label, it === cur, function () { state.view = resolveItem(it, detail); buildControls(); render(); })); });
+    curG.items.forEach(function (it) { vEl.appendChild(chip(it.rel && state.rankMode === "rel" ? it.rel : it.label, it === cur, function () { state.view = resolveItem(it, detail); buildControls(); render(); })); });
     var both = cur && cur.ids && hasView(cur.ids.cat) && hasView(cur.ids.rome);
     $("#detailrow").hidden = !both;
+    var ranked = !!(cur && cur.rel);
+    $("#moderow").hidden = !ranked;
+    var mEl2 = $("#rankmode"); mEl2.innerHTML = "";
+    if (ranked) [["rel", "Par rapport au marché"], ["abs", "Variation réelle"]].forEach(function (d) {
+      mEl2.appendChild(chip(d[1], state.rankMode === d[0], function () { state.rankMode = d[0]; buildControls(); render(); }));
+    });
     var dEl = $("#detail"); dEl.innerHTML = "";
     if (both) [["cat", "Catégories Indeed (quotidien)"], ["rome", "Métiers précis (trimestriel)"]].forEach(function (d) {
       dEl.appendChild(chip(d[1], detail === d[0], function () { state.view = cur.ids[d[0]]; buildControls(); render(); }));
