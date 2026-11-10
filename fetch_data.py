@@ -3,7 +3,8 @@
 
 Sources :
   - Indeed Hiring Lab (CC BY 4.0) : offres d'emploi France, global + 35 catégories
-  - Eurostat : chômage mensuel, PIB trimestriel, exportations/importations trimestrielles (France)
+  - Eurostat : chômage mensuel (total et moins de 25 ans), PIB, exportations/importations, emploi total (trimestriels),
+    intentions d'embauche des services (mensuel), Euribor 3 mois (mensuel)
 Usage : python fetch_data.py
 """
 import csv, io, json, os, urllib.request
@@ -86,6 +87,15 @@ def macro():
                     "points": eurostat("namq_10_gdp", dict(gdp, na_item="P6"))},
         "imports": {"label": "Importations (volume)", "freq": "trimestriel",
                     "points": eurostat("namq_10_gdp", dict(gdp, na_item="P7"))},
+        # indicateurs liés au volume d'emploi (ajoutés après les quatre premiers : l'ordre est conservé dans data.js)
+        "emploi": {"label": "Emploi total (personnes)", "freq": "trimestriel",
+                   "points": eurostat("namq_10_pe", dict(geo="FR", unit="THS_PER", s_adj="SA", na_item="EMP_DC"))},
+        "intentions": {"label": "Intentions d'embauche (services)", "freq": "mensuel",
+                       "points": eurostat("ei_bsse_m_r2", dict(geo="FR", s_adj="SA", indic="BS-SEEM"))},
+        "euribor": {"label": "Euribor 3 mois", "freq": "mensuel",
+                    "points": eurostat("irt_st_m", dict(geo="EA", int_rt="IRT_M3"))},
+        "chomage_jeunes": {"label": "Chômage des moins de 25 ans", "freq": "mensuel",
+                           "points": eurostat("une_rt_m", dict(geo="FR", s_adj="SA", age="Y_LT25", sex="T", unit="PC_ACT"))},
     }
 
 

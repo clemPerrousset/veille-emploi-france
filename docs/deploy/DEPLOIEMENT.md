@@ -742,7 +742,7 @@ Dans un navigateur, ouvrez `https://ecostat21.applicationrush.fr` :
 
 - la page se charge avec le cadenas (certificat valide) ;
 - la page se charge **sans erreur dans la console du navigateur** (touche F12, onglet Console) ;
-- les **quatre thèmes** (Emploi, Exposition à l'IA, Tech, Mon suivi) fonctionnent : chacun affiche ses graphiques ;
+- les **quatre thèmes** (Emploi, Exposition à l'IA, Tech, Métiers précis) fonctionnent : chacun affiche ses graphiques ;
 - le **pied de page** affiche les dates de collecte de chaque source ; ce sont les dates `updated` propres aux fichiers de données (`/health` indique, lui, les collectes exécutées depuis le démarrage du programme et l'âge des fichiers : les deux peuvent légitimement différer) ;
 - l'écran « Sources, limites et licences » est accessible.
 

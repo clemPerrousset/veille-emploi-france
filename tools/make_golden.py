@@ -13,7 +13,9 @@ spec.loader.exec_module(fd)
 
 
 ESTAT_BY_QUERY = (  # fragment d'URL -> fixture Eurostat (mêmes requêtes que fd.macro())
+    ("age=Y_LT25", "chomage_jeunes"),  # avant « une_rt_m » : même jeu de données que le chômage total
     ("une_rt_m", "chomage"), ("na_item=B1GQ", "pib"), ("na_item=P6", "exports"), ("na_item=P7", "imports"),
+    ("namq_10_pe", "emploi"), ("ei_bsse_m_r2", "intentions"), ("irt_st_m", "euribor"),
 )
 DARES_BY_DATASET = {
     "dares_offres_collectees_satisfaites_france_travail_cvs-cjo_mens": "offres.csv",
@@ -53,7 +55,7 @@ def dump(fname, obj):
 
 
 macro = fd.macro()  # appelle fd.eurostat() pour chaque requête de macro()
-for key in ("chomage", "pib", "exports", "imports"):
+for key in ("chomage", "pib", "exports", "imports", "emploi", "intentions", "euribor", "chomage_jeunes"):
     dump(f"eurostat_{key}.json", macro[key]["points"])
 dares = fd.dares_series()
 dump("dares_offres.json", dares["ft_offres"]["points"])

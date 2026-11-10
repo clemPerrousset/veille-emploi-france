@@ -81,10 +81,17 @@ async fn eurostat_points(
     params: &[(&str, &str)],
 ) -> Result<Vec<(String, f64)>, CollectError> {
     let q: Vec<String> = params.iter().map(|(k, v)| format!("{k}={v}")).collect();
-    let label = match params.iter().find(|(k, _)| *k == "na_item") {
-        Some((_, item)) => format!("eurostat {dataset} na_item={item}"),
-        None => format!("eurostat {dataset}"),
-    };
+    // Étiquette des messages d'erreur : le jeu de données + ce qui distingue la série (jamais l'URL).
+    let mut label = format!("eurostat {dataset}");
+    if let Some((k, v)) = params
+        .iter()
+        .find(|(k, _)| matches!(*k, "na_item" | "indic" | "int_rt"))
+    {
+        label.push_str(&format!(" {k}={v}"));
+    }
+    if let Some((_, age)) = params.iter().find(|(k, v)| *k == "age" && *v != "TOTAL") {
+        label.push_str(&format!(" age={age}"));
+    }
     let body = get(
         http,
         &label,
@@ -178,6 +185,41 @@ pub async fn run(
     let pib = eurostat_points(http, es, "namq_10_gdp", &gdp("B1GQ")).await?;
     let exports = eurostat_points(http, es, "namq_10_gdp", &gdp("P6")).await?;
     let imports = eurostat_points(http, es, "namq_10_gdp", &gdp("P7")).await?;
+    // Indicateurs liés au volume d'emploi (mêmes requêtes que macro() de fetch_data.py)
+    let emploi = eurostat_points(
+        http,
+        es,
+        "namq_10_pe",
+        &[
+            ("geo", "FR"),
+            ("unit", "THS_PER"),
+            ("s_adj", "SA"),
+            ("na_item", "EMP_DC"),
+        ],
+    )
+    .await?;
+    let intentions = eurostat_points(
+        http,
+        es,
+        "ei_bsse_m_r2",
+        &[("geo", "FR"), ("s_adj", "SA"), ("indic", "BS-SEEM")],
+    )
+    .await?;
+    let euribor =
+        eurostat_points(http, es, "irt_st_m", &[("geo", "EA"), ("int_rt", "IRT_M3")]).await?;
+    let chomage_jeunes = eurostat_points(
+        http,
+        es,
+        "une_rt_m",
+        &[
+            ("geo", "FR"),
+            ("s_adj", "SA"),
+            ("age", "Y_LT25"),
+            ("sex", "T"),
+            ("unit", "PC_ACT"),
+        ],
+    )
+    .await?;
 
     let d = src.dares.as_str();
     let l = "dares offres";
@@ -208,6 +250,10 @@ pub async fn run(
             "pib": series("PIB (volume)", "trimestriel", pib),
             "exports": series("Exportations (volume)", "trimestriel", exports),
             "imports": series("Importations (volume)", "trimestriel", imports),
+            "emploi": series("Emploi total (personnes)", "trimestriel", emploi),
+            "intentions": series("Intentions d'embauche (services)", "mensuel", intentions),
+            "euribor": series("Euribor 3 mois", "mensuel", euribor),
+            "chomage_jeunes": series("Chômage des moins de 25 ans", "mensuel", chomage_jeunes),
             "ft_offres": series("Offres France Travail", "mensuel", offres),
             "ft_dei": series("Demandeurs d'emploi (cat. A)", "mensuel", dei),
         },
@@ -231,14 +277,18 @@ mod tests {
     const DARES_DEI: &str = "dares_defm_stock_france_cvs";
     const DARES_VAC: &str = "dares_emploivacants_cvs_emploisvacants";
 
-    /// Nom d'endpoint -> étiquette attendue dans les messages d'erreur (les 9 requêtes).
-    const LABELS: [(&str, &str); 9] = [
+    /// Nom d'endpoint -> étiquette attendue dans les messages d'erreur (les 13 requêtes).
+    const LABELS: [(&str, &str); 13] = [
         ("indeed_aggregate", "indeed aggregate"),
         ("indeed_sectors", "indeed sectors"),
         ("eurostat_chomage", "eurostat une_rt_m"),
         ("eurostat_pib", "eurostat namq_10_gdp na_item=B1GQ"),
         ("eurostat_exports", "eurostat namq_10_gdp na_item=P6"),
         ("eurostat_imports", "eurostat namq_10_gdp na_item=P7"),
+        ("eurostat_emploi", "eurostat namq_10_pe na_item=EMP_DC"),
+        ("eurostat_intentions", "eurostat ei_bsse_m_r2 indic=BS-SEEM"),
+        ("eurostat_euribor", "eurostat irt_st_m int_rt=IRT_M3"),
+        ("eurostat_jeunes", "eurostat une_rt_m age=Y_LT25"),
         ("dares_offres", "dares offres"),
         ("dares_dei", "dares dei"),
         ("dares_vacants", "dares vacants"),
@@ -253,28 +303,31 @@ mod tests {
     );
 
     fn endpoints() -> Vec<Endpoint> {
-        let es = |item: Option<&'static str>,
+        let es = |q: Vec<(&'static str, &'static str)>,
                   ds: &str,
                   fix: &'static str,
                   name: &'static str|
          -> Endpoint {
-            let mut q = match item {
-                None => vec![
-                    ("geo", "FR"),
-                    ("s_adj", "SA"),
-                    ("age", "TOTAL"),
-                    ("sex", "T"),
-                    ("unit", "PC_ACT"),
-                ],
-                Some(i) => vec![
-                    ("geo", "FR"),
-                    ("unit", "CLV20_MEUR"),
-                    ("s_adj", "SCA"),
-                    ("na_item", i),
-                ],
-            };
+            let mut q = q;
             q.push(("sinceTimePeriod", "2019-01"));
             (name, format!("/eurostat/{ds}"), q, fix)
+        };
+        let gdp = |i: &'static str| {
+            vec![
+                ("geo", "FR"),
+                ("unit", "CLV20_MEUR"),
+                ("s_adj", "SCA"),
+                ("na_item", i),
+            ]
+        };
+        let chom = |age: &'static str| {
+            vec![
+                ("geo", "FR"),
+                ("s_adj", "SA"),
+                ("age", age),
+                ("sex", "T"),
+                ("unit", "PC_ACT"),
+            ]
         };
         let da = |ds: &str, fix: &'static str, name: &'static str| -> Endpoint {
             (
@@ -298,28 +351,57 @@ mod tests {
                 "indeed/sectors.csv",
             ),
             es(
-                None,
+                chom("TOTAL"),
                 "une_rt_m",
                 "eurostat/chomage.json",
                 "eurostat_chomage",
             ),
             es(
-                Some("B1GQ"),
+                gdp("B1GQ"),
                 "namq_10_gdp",
                 "eurostat/pib.json",
                 "eurostat_pib",
             ),
             es(
-                Some("P6"),
+                gdp("P6"),
                 "namq_10_gdp",
                 "eurostat/exports.json",
                 "eurostat_exports",
             ),
             es(
-                Some("P7"),
+                gdp("P7"),
                 "namq_10_gdp",
                 "eurostat/imports.json",
                 "eurostat_imports",
+            ),
+            es(
+                vec![
+                    ("geo", "FR"),
+                    ("unit", "THS_PER"),
+                    ("s_adj", "SA"),
+                    ("na_item", "EMP_DC"),
+                ],
+                "namq_10_pe",
+                "eurostat/emploi.json",
+                "eurostat_emploi",
+            ),
+            es(
+                vec![("geo", "FR"), ("s_adj", "SA"), ("indic", "BS-SEEM")],
+                "ei_bsse_m_r2",
+                "eurostat/intentions.json",
+                "eurostat_intentions",
+            ),
+            es(
+                vec![("geo", "EA"), ("int_rt", "IRT_M3")],
+                "irt_st_m",
+                "eurostat/euribor.json",
+                "eurostat_euribor",
+            ),
+            es(
+                chom("Y_LT25"),
+                "une_rt_m",
+                "eurostat/chomage_jeunes.json",
+                "eurostat_jeunes",
             ),
             da(DARES_OFFRES, "dares/offres.csv", "dares_offres"),
             da(DARES_DEI, "dares/dei.csv", "dares_dei"),
@@ -426,6 +508,10 @@ mod tests {
                 "pib",
                 "exports",
                 "imports",
+                "emploi",
+                "intentions",
+                "euribor",
+                "chomage_jeunes",
                 "ft_offres",
                 "ft_dei"
             ]

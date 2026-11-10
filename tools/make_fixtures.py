@@ -19,6 +19,10 @@ ESTAT_QUERIES = {
     "pib": ("namq_10_gdp", dict(GDP, na_item="B1GQ")),
     "exports": ("namq_10_gdp", dict(GDP, na_item="P6")),
     "imports": ("namq_10_gdp", dict(GDP, na_item="P7")),
+    "emploi": ("namq_10_pe", dict(geo="FR", unit="THS_PER", s_adj="SA", na_item="EMP_DC")),
+    "intentions": ("ei_bsse_m_r2", dict(geo="FR", s_adj="SA", indic="BS-SEEM")),
+    "euribor": ("irt_st_m", dict(geo="EA", int_rt="IRT_M3")),
+    "chomage_jeunes": ("une_rt_m", dict(geo="FR", s_adj="SA", age="Y_LT25", sex="T", unit="PC_ACT")),
 }
 DARES_SETS = {
     "offres": "dares_offres_collectees_satisfaites_france_travail_cvs-cjo_mens",

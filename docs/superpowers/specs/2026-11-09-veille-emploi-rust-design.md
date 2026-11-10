@@ -11,7 +11,7 @@ Pourquoi : l'outil sert à garder « une vision très claire » de ce qui se pas
 ## 2. Objectifs, non-objectifs, anti-objectifs
 
 **Objectifs**
-- Reproduire à l'identique ce que fait le prototype : 4 thèmes (Emploi, Exposition à l'IA, Tech, Mon suivi), les vues, la période réglable, l'interrupteur de niveau de détail, la superposition macro, le tableau de bord tech, l'écran « Sources, limites et licences ».
+- Reproduire à l'identique ce que fait le prototype : 4 thèmes (Emploi, Exposition à l'IA, Tech, Métiers précis), les vues, la période réglable, l'interrupteur de niveau de détail, la superposition macro, le tableau de bord tech, l'écran « Sources, limites et licences ».
 - Collecte automatique : Indeed, Eurostat et DARES chaque jour ; France Travail (métiers ROME, tech) de façon à rester à jour au rythme trimestriel de la source.
 - Un seul binaire Rust à déployer, supervisé par `systemd`, derrière le serveur web déjà en place.
 - Les données exposées par le service gardent **le même format que les fichiers actuels** (`window.DATA`, `window.ROME`, `window.TECH`, `window.AI`, `window.AIROME`), pour que l'interface JavaScript actuelle fonctionne sans réécriture.

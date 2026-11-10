@@ -39,7 +39,7 @@ fn ok(rel: &str) -> ResponseTemplate {
     ResponseTemplate::new(200).set_body_bytes(fixture(rel))
 }
 
-/// Serveur simulé des 9 requêtes de `core` ; `fail_chomage` fait échouer Eurostat (chômage).
+/// Serveur simulé des 13 requêtes de `core` ; `fail_chomage` fait échouer Eurostat (chômage).
 async fn server(fail_chomage: bool) -> MockServer {
     let srv = MockServer::start().await;
     for (p, f) in [
@@ -63,9 +63,17 @@ async fn server(fail_chomage: bool) -> MockServer {
     } else {
         ok("eurostat/chomage.json")
     };
+    // même chemin pour le chômage total et celui des moins de 25 ans : on les distingue par `age`
     Mock::given(method("GET"))
         .and(path("/eurostat/une_rt_m"))
+        .and(query_param("age", "TOTAL"))
         .respond_with(chomage)
+        .mount(&srv)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/eurostat/une_rt_m"))
+        .and(query_param("age", "Y_LT25"))
+        .respond_with(ok("eurostat/chomage_jeunes.json"))
         .mount(&srv)
         .await;
     for (item, f) in [
@@ -76,6 +84,17 @@ async fn server(fail_chomage: bool) -> MockServer {
         Mock::given(method("GET"))
             .and(path("/eurostat/namq_10_gdp"))
             .and(query_param("na_item", item))
+            .respond_with(ok(f))
+            .mount(&srv)
+            .await;
+    }
+    for (p, f) in [
+        ("/eurostat/namq_10_pe", "eurostat/emploi.json"),
+        ("/eurostat/ei_bsse_m_r2", "eurostat/intentions.json"),
+        ("/eurostat/irt_st_m", "eurostat/euribor.json"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(p))
             .respond_with(ok(f))
             .mount(&srv)
             .await;

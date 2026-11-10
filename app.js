@@ -32,7 +32,9 @@
   var aggX = D.aggregate["total postings"].dates.map(ms);
   ITEMS.total = { key: "total", label: "Offres d'emploi, ensemble de la France", xs: aggX, ys: D.aggregate["total postings"].values, kind: "tot" };
   ITEMS.newp = { key: "newp", label: "Nouvelles offres publiées", xs: D.aggregate["new postings"].dates.map(ms), ys: D.aggregate["new postings"].values, kind: "tot" };
-  var MACRO_COL = { chomage: "#0f766e", pib: "#7c3aed", exports: "#0891b2", imports: "#b45309", ft_offres: "#be185d", ft_dei: "#4d7c0f" };
+  var MACRO_COL = { chomage: "#0f766e", pib: "#7c3aed", exports: "#0891b2", imports: "#b45309", ft_offres: "#be185d", ft_dei: "#4d7c0f", emploi: "#0369a1", intentions: "#ea580c", euribor: "#475569", chomage_jeunes: "#ca8a04" };
+  /* macro en points (variation affichée en pt) ; DIFF : valeurs pouvant être négatives ou proches de 0, tracées en écart (100 + variation) et non en pourcentage */
+  var MACRO_PT = ["chomage", "chomage_jeunes", "intentions", "euribor"], MACRO_DIFF = ["intentions", "euribor"];
   var VAC_LABEL = { F: "Construction", GTI: "Commerce, transports, hôtellerie-restauration", L: "Immobilier", BTE: "Industrie", J: "Information & communication (tech)", P_Q: "Enseignement, santé, action sociale", R_S: "Arts, loisirs & autres services", K: "Finance & assurance", M_N: "Services spécialisés & de soutien" };
   Object.keys(D.vacants || {}).forEach(function (c) {
     var v = D.vacants[c];
@@ -131,7 +133,7 @@
   function qLabel(x) { var d = new Date(x); return "T" + (Math.floor(d.getUTCMonth() / 3) + 1) + " " + d.getUTCFullYear(); }
   Object.keys(D.macro).forEach(function (k) {
     var m = D.macro[k];
-    ITEMS["m:" + k] = { key: "m:" + k, label: m.label, xs: m.points.map(function (p) { return ms(p[0]); }), ys: m.points.map(function (p) { return p[1]; }), kind: "macro", unit: k === "chomage" ? "pt" : "%", sub: m.freq, color: MACRO_COL[k] };
+    ITEMS["m:" + k] = { key: "m:" + k, label: m.label, xs: m.points.map(function (p) { return ms(p[0]); }), ys: m.points.map(function (p) { return p[1]; }), kind: "macro", unit: MACRO_PT.indexOf(k) >= 0 ? "pt" : "%", diff: MACRO_DIFF.indexOf(k) >= 0, sub: m.freq, color: MACRO_COL[k] };
   });
   var LAST = Math.max(secX[secX.length - 1], aggX[aggX.length - 1]);
   var FIRST = ms("2020-02-01");
@@ -156,7 +158,7 @@
     { id: "romeAiUp", label: "Métiers précis IA en montée", title: "Métiers précis exposés à l'IA et en montée", rome: true, ai: true },
     { id: "romeQ", label: "Offres par exposition à l'IA", title: "Cinq niveaux d'exposition à l'IA", rome: true, ai: true },
     { id: "romeTech", label: "Tech : tableau de bord", title: "Métiers du numérique (ROME)", rome: true, tech: true },
-    { id: "mine", label: "Mon suivi", title: "Mes métiers" }
+    { id: "mine", label: "Métiers précis", title: "Mes métiers" }
   ].filter(function (v) { return (!v.rome || ROME_KEYS.length) && (!v.tech || TECH_CODES.length) && (!v.ai || AIR); });
   var state = { view: "global", period: 365, custom: "", rebase: "window", macro: [], mine: ["c:Software Development"], techMetric: "off", rankMode: "rel" };
   try { var sv = JSON.parse(localStorage.getItem("veille-emploi") || "null"); if (sv) Object.keys(state).forEach(function (k) { if (sv[k] !== undefined) state[k] = sv[k]; }); } catch (e) {}
@@ -324,7 +326,7 @@
     var i0 = lowerBound(item.xs, start);
     if (i0 >= item.xs.length) return null;
     var base = state.rebase === "window" ? item.ys[i0] : item.ys[closest(item.xs, FIRST)];
-    var x = item.xs.slice(i0), y = item.ys.slice(i0).map(function (v) { return item.kind === "vac" ? v : v / base * 100; });
+    var x = item.xs.slice(i0), y = item.ys.slice(i0).map(function (v) { return item.kind === "vac" ? v : (item.diff ? 100 + v - base : v / base * 100); });
     var m = measure(item, start);
     return { item: item, color: color, dash: dash, x: x, y: y, delta: m.delta, n: x.length };
   }
@@ -372,6 +374,7 @@
       var sr = toSeries(it, start, it.color, [7, 4]);
       if (!sr) { addNote(it.label + " : aucune donnée sur cette période."); return; }
       if (sr.n < 2) addNote(it.label + " : un seul point sur cette période (" + it.sub + "). Allonge la période pour voir une courbe.");
+      if (it.diff) addNote(it.label + " : tracé en écart (100 + variation en points), car cette série peut être négative.");
       series.push(sr);
     });
 
@@ -511,7 +514,7 @@
     { g: "Tech", items: [
       { label: "Vue rapide (Indeed)", id: "tech" },
       { label: "Tableau de bord (France Travail)", id: "romeTech" }] },
-    { g: "Mon suivi", items: [{ label: "Mes métiers", id: "mine" }] }
+    { g: "Métiers précis", items: [{ label: "Mes métiers", id: "mine" }] }
   ];
   function hasView(id) { return VIEWS.some(function (v) { return v.id === id; }); }
   function itemIds(it) { return (it.id ? [it.id] : [it.ids.cat, it.ids.rome]).filter(hasView); }

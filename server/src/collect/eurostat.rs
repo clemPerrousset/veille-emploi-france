@@ -16,7 +16,10 @@ fn try_period_to_date(p: &str) -> Option<String> {
         return Some(format!("{}-{:02}-15", year(y)?, (q - 1) * 3 + 2));
     }
     let (y, m) = p.split_once('-')?;
-    let m: u32 = m.parse().ok().filter(|m| (1..=12).contains(m) && p.len() == 7)?;
+    let m: u32 = m
+        .parse()
+        .ok()
+        .filter(|m| (1..=12).contains(m) && p.len() == 7)?;
     Some(format!("{}-{:02}-15", year(y)?, m))
 }
 
@@ -43,8 +46,8 @@ fn number(v: &Value, pos: usize) -> Result<Option<f64>, ParseError> {
 /// Points `(date, valeur)` d'une réponse JSON-stat Eurostat, triés par position de période ;
 /// les valeurs absentes sont ignorées.
 pub fn parse_jsonstat(json: &str) -> Result<Vec<(String, f64)>, ParseError> {
-    let js: Value =
-        serde_json::from_str(json).map_err(|e| ParseError::Format(format!("JSON invalide : {e}")))?;
+    let js: Value = serde_json::from_str(json)
+        .map_err(|e| ParseError::Format(format!("JSON invalide : {e}")))?;
     let index = js
         .pointer("/dimension/time/category/index")
         .ok_or_else(|| ParseError::Format("dimension temporelle absente".into()))?;
@@ -90,7 +93,9 @@ pub fn parse_jsonstat(json: &str) -> Result<Vec<(String, f64)>, ParseError> {
         out.push((date, v));
     }
     if out.is_empty() {
-        return Err(ParseError::Format("aucune valeur dans la réponse JSON-stat".into()));
+        return Err(ParseError::Format(
+            "aucune valeur dans la réponse JSON-stat".into(),
+        ));
     }
     Ok(out)
 }
@@ -100,7 +105,11 @@ mod tests {
     use super::*;
 
     fn pts(v: Vec<(String, f64)>) -> Value {
-        Value::Array(v.into_iter().map(|(d, x)| serde_json::json!([d, x])).collect())
+        Value::Array(
+            v.into_iter()
+                .map(|(d, x)| serde_json::json!([d, x]))
+                .collect(),
+        )
     }
     fn gold(s: &str) -> Value {
         serde_json::from_str(s).unwrap()
@@ -125,14 +134,20 @@ mod tests {
         let v = parse_jsonstat(js).unwrap();
         assert_eq!(
             v,
-            vec![("2020-05-15".to_string(), 10.5), ("2021-02-15".to_string(), 12.0)]
+            vec![
+                ("2020-05-15".to_string(), 10.5),
+                ("2021-02-15".to_string(), 12.0)
+            ]
         );
         // forme dense (tableau avec null)
         let dense = r#"{"dimension":{"time":{"category":{"index":{"2020-01":0,"2020-02":1,"2020-03":2}}}},
             "value":[null,3.5,4]}"#;
         assert_eq!(
             parse_jsonstat(dense).unwrap(),
-            vec![("2020-02-15".to_string(), 3.5), ("2020-03-15".to_string(), 4.0)]
+            vec![
+                ("2020-02-15".to_string(), 3.5),
+                ("2020-03-15".to_string(), 4.0)
+            ]
         );
     }
 
@@ -155,6 +170,22 @@ mod tests {
                 include_str!("../../tests/fixtures/eurostat/imports.json"),
                 include_str!("../../tests/golden/eurostat_imports.json"),
             ),
+            (
+                include_str!("../../tests/fixtures/eurostat/emploi.json"),
+                include_str!("../../tests/golden/eurostat_emploi.json"),
+            ),
+            (
+                include_str!("../../tests/fixtures/eurostat/intentions.json"),
+                include_str!("../../tests/golden/eurostat_intentions.json"),
+            ),
+            (
+                include_str!("../../tests/fixtures/eurostat/euribor.json"),
+                include_str!("../../tests/golden/eurostat_euribor.json"),
+            ),
+            (
+                include_str!("../../tests/fixtures/eurostat/chomage_jeunes.json"),
+                include_str!("../../tests/golden/eurostat_chomage_jeunes.json"),
+            ),
         ];
         for (fixture, golden) in cases {
             let got = parse_jsonstat(fixture).unwrap();
@@ -166,24 +197,32 @@ mod tests {
 
     #[test]
     fn jsonstat_rejects_html() {
-        assert!(matches!(parse_jsonstat("<html>502</html>"), Err(ParseError::Format(_))));
+        assert!(matches!(
+            parse_jsonstat("<html>502</html>"),
+            Err(ParseError::Format(_))
+        ));
         assert!(matches!(parse_jsonstat(""), Err(ParseError::Format(_))));
         assert!(matches!(parse_jsonstat("{}"), Err(ParseError::Format(_))));
     }
 
     #[test]
     fn jsonstat_rejects_series_without_values() {
-        let none = r#"{"dimension":{"time":{"category":{"index":{"2020-01":0,"2020-02":1}}}},"value":{}}"#;
+        let none =
+            r#"{"dimension":{"time":{"category":{"index":{"2020-01":0,"2020-02":1}}}},"value":{}}"#;
         assert!(matches!(parse_jsonstat(none), Err(ParseError::Format(_))));
         let nulls = r#"{"dimension":{"time":{"category":{"index":{"2020-01":0}}}},"value":[null]}"#;
         assert!(matches!(parse_jsonstat(nulls), Err(ParseError::Format(_))));
         let empty_idx = r#"{"dimension":{"time":{"category":{"index":{}}}},"value":{}}"#;
-        assert!(matches!(parse_jsonstat(empty_idx), Err(ParseError::Format(_))));
+        assert!(matches!(
+            parse_jsonstat(empty_idx),
+            Err(ParseError::Format(_))
+        ));
     }
 
     #[test]
     fn jsonstat_rejects_bad_value_or_period() {
-        let s = r#"{"dimension":{"time":{"category":{"index":{"2020-01":0}}}},"value":{"0":"abc"}}"#;
+        let s =
+            r#"{"dimension":{"time":{"category":{"index":{"2020-01":0}}}},"value":{"0":"abc"}}"#;
         assert!(matches!(parse_jsonstat(s), Err(ParseError::Format(_))));
         let p = r#"{"dimension":{"time":{"category":{"index":{"2020-13":0}}}},"value":{"0":1}}"#;
         assert!(matches!(parse_jsonstat(p), Err(ParseError::Format(_))));

@@ -6,7 +6,7 @@ Tableau de bord personnel pour suivre le marché de l'emploi en France : offres 
 
 Double-clic sur `index.html` (aucun serveur ni installation). Il faut une connexion Internet seulement pour actualiser les données, pas pour consulter.
 
-**Première utilisation après un clonage du dépôt** : `data/data.js` (Indeed, Eurostat, DARES) est fourni, donc les vues Emploi, Secteurs, Difficultés de recrutement et Mon suivi (catégories) fonctionnent tout de suite. Les fichiers `data/rome.js` et `data/tech.js` (métiers précis, exposition IA par métier, tableau de bord tech) viennent de l'API France Travail et ne sont **pas** versionnés : crée ton `.env` puis lance `python fetch_rome.py` et `python fetch_tech.py` (voir plus bas). Sans eux, ces vues sont simplement masquées.
+**Première utilisation après un clonage du dépôt** : `data/data.js` (Indeed, Eurostat, DARES) est fourni, donc les vues Emploi, Secteurs, Difficultés de recrutement et Métiers précis (catégories) fonctionnent tout de suite. Les fichiers `data/rome.js` et `data/tech.js` (métiers précis, exposition IA par métier, tableau de bord tech) viennent de l'API France Travail et ne sont **pas** versionnés : crée ton `.env` puis lance `python fetch_rome.py` et `python fetch_tech.py` (voir plus bas). Sans eux, ces vues sont simplement masquées.
 
 ## Actualiser les données
 
@@ -38,7 +38,7 @@ FT_CLIENT_SECRET=...
 | Emploi | Global, métiers en montée / en descente, secteurs en montée / en descente, difficultés de recrutement |
 | Exposition à l'IA | les plus exposés, exposés et en montée, par niveau d'exposition (5 groupes) |
 | Tech | vue rapide (3 catégories Indeed), tableau de bord (18 métiers : offres, demandeurs, embauches, tension) |
-| Mon suivi | jusqu'à 6 métiers de ton choix, catégories Indeed ou métiers précis |
+| Métiers précis | jusqu'à 6 métiers de ton choix, catégories Indeed ou métiers précis |
 
 Un interrupteur « Niveau de détail » bascule entre les **catégories Indeed** (34, quotidien) et les **métiers précis France Travail** (codes ROME, trimestriel). La période est réglable (1 mois à depuis 2020, ou une date de début), et les courbes macro se superposent en base 100.
 
@@ -47,7 +47,7 @@ Un interrupteur « Niveau de détail » bascule entre les **catégories Indeed**
 | Donnée | Source | Licence / remarque |
 |---|---|---|
 | Offres d'emploi, 34 catégories | [Indeed Hiring Lab](https://github.com/hiring-lab/job_postings_tracker) | CC BY 4.0 (citer la source) |
-| Chômage, PIB, exportations, importations | Eurostat | Réutilisation libre avec mention |
+| Chômage (total et moins de 25 ans), PIB, exportations, importations, emploi total, intentions d'embauche des services, Euribor 3 mois | Eurostat | Réutilisation libre avec mention |
 | Offres collectées, demandeurs (cat. A), emplois vacants par secteur | [DARES, open data](https://data.dares.travail-emploi.gouv.fr) | Licence Ouverte |
 | Offres, demandeurs, embauches, tension par métier ROME | API « Marché du travail » de France Travail | Licence Ouverte (Etalab), avec mention de la source |
 | Étude de référence sur l'exposition à l'IA | [LIFT WP 2026-02 (Banque de France / HEC)](https://heclift.github.io/website/files/papers/LIFT_WP_2026-02.pdf) | CC BY 4.0 ; leurs scores par métier ne sont pas publiés |
