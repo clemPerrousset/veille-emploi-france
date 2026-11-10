@@ -484,7 +484,7 @@ On ajoute un **nouveau fichier** : aucun fichier existant n'est ouvert.
 
 ### 7.1 Créer le bloc `server`
 
-**MODIFIE LE SYSTÈME** (crée un fichier dans `sites-available`, rien n'est encore actif). Remplacez `3210` par votre port si vous en avez choisi un autre (avec `sudoedit` après coup). Les guillemets autour de `EOF` empêchent le shell de toucher aux `$` de la configuration. **Ne relancez pas cette commande si le fichier existe déjà, surtout après certbot** : elle effacerait le bloc HTTPS que certbot y a ajouté. Pour modifier ce fichier ensuite, utilisez `SUDO_EDITOR=nano SUDO_EDITOR=nano sudoedit /etc/nginx/sites-available/veille-emploi.conf`.
+**MODIFIE LE SYSTÈME** (crée un fichier dans `sites-available`, rien n'est encore actif). Remplacez `3210` par votre port si vous en avez choisi un autre (avec `sudoedit` après coup). Les guillemets autour de `EOF` empêchent le shell de toucher aux `$` de la configuration. **Ne relancez pas cette commande si le fichier existe déjà, surtout après certbot** : elle effacerait le bloc HTTPS que certbot y a ajouté. Pour modifier ce fichier ensuite, utilisez `SUDO_EDITOR=nano sudoedit /etc/nginx/sites-available/veille-emploi.conf`.
 
 ```bash
 sudo tee /etc/nginx/sites-available/veille-emploi.conf > /dev/null <<'EOF'
